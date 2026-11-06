@@ -102,14 +102,22 @@ review, merged into a local `stl-local`:
 | `lift-eh32-eh-prolog` | landing pads for frames opened through `__EH_prolog` | **Yes**: msvcp71's catches |
 | tpw-recomp's (`win32hle-dinput`, `-gdi-lfwidth`, `-mouse-confine`, `-dsound-cursor`, `-metal`) | DirectInput, Metal and the rest | for the host, Phase 3 on |
 
+All of them are on [cpressland/pcrecomp](https://github.com/cpressland/pcrecomp):
+
 ```
 cd ../pcrecomp
+git remote add cpressland https://github.com/cpressland/pcrecomp
+git fetch origin && git fetch cpressland
 git switch -c stl-local origin/main
-git merge --no-edit win32hle-dinput win32hle-gdi-lfwidth win32hle-mouse-confine win32hle-dsound-cursor
-git merge --no-edit win32hle-metal        # screen.c: keep both present(0) and confine_update(); README: both rows
-git merge --no-edit win32hle-eh32         # README: both rows
-git merge --no-edit lift-eh32-eh-prolog
+git merge --no-edit cpressland/win32hle-dinput cpressland/win32hle-gdi-lfwidth cpressland/win32hle-mouse-confine cpressland/win32hle-dsound-cursor
+git merge --no-edit cpressland/win32hle-metal    # screen.c: keep both present(0) and confine_update(); README: both rows
+git add runtime/win32hle/README.md runtime/win32hle/screen.c && git commit --no-edit
+git merge --no-edit cpressland/win32hle-eh32     # README: keep both rows
+git add runtime/win32hle/README.md && git commit --no-edit
+git merge --no-edit cpressland/lift-eh32-eh-prolog
 ```
+
+When a branch is merged upstream, drop it from this list (and the table).
 
 ## License
 
