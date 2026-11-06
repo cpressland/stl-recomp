@@ -1,0 +1,14 @@
+# Retail game data and the patch: never checked in
+*.iso
+*.ISO
+*.exe
+*.EXE
+*.cab
+/game/
+/work/
+/build*/
+.venv/
+__pycache__/
+.DS_Store
+# Generated from the game: never checked in
+/src/recomp/gen/

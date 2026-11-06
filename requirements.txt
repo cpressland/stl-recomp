@@ -1,0 +1,5 @@
+# Python packages the tools need: uv pip install --python .venv/bin/python -r requirements.txt
+olefile==0.47
+pefile==2024.8.26
+capstone==5.0.9
+unicorn==2.1.4
