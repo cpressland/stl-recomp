@@ -6,9 +6,14 @@
 Into one folder (by default the Mac's Application Support, where Star Trek
 Legacy.app will look):
 
-    game/          the installed game, patched to 1.2: what the Windows
-                   installer and the patch would have put in Program Files
-    install.json   what each part was made from
+    game/            the installed game, patched to 1.2: what the Windows
+                     installer and the patch would have put in Program Files
+    build/src/       the sources it builds from, copied from this repository
+                     and pcrecomp (SOURCES), so the build's paths never move
+    build/analysis/  each module's function catalog and the rest of the
+                     lift's inputs (tools/gen/analyse.py)
+    build/gen/       the lifted C of all four modules (run_lift.py)
+    install.json     what each part was made from
 
 No installer is run. The disc is an InstallShield 11 install: a Windows
 Installer database (`Star Trek Legacy.msi`) whose tables say where each
@@ -25,18 +30,21 @@ files to put in place of the disc's: no binary deltas.
 Run again, it redoes only what is out of date: the disc's steps run again
 only when they change (DATA_VERSION) or the game folder is gone, and then
 need the disc image and the patch again. --status says what a run would
-redo, as JSON. The lift and the build join these steps in later phases
-(docs/PLAN.md).
+redo, as JSON: after a lifter fix only the lift, after an analysis fix the
+analysis and the lift. The compile and the app join these steps in later
+phases (docs/PLAN.md).
 
 Progress goes to stdout as plain lines; `@step i n title`, `@progress
 fraction` and `@error text` lines are for a front end to show.
 """
 import argparse
+import filecmp
 import hashlib
 import json
 import os
 import shutil
 import ssl
+import subprocess
 import sys
 import time
 import urllib.error
@@ -68,6 +76,10 @@ DEFAULT_DEST = os.path.expanduser('~/Library/Application Support/Star Trek Legac
 KEEP = ()
 SPACE_NEEDED = 6 << 30       # the game folder (3.3 GB) and the downloads (2.2 GB)
 
+# What the build needs of each tree: what the app will carry, and what is staged.
+SOURCES = {'stl': ('CMakeLists.txt', 'run_lift.py', 'tools'),
+           'pcrecomp': ('runtime', 'tools', 'LICENSE')}
+
 # --download: the two files, from where this project keeps copies of them
 # (STL_DOWNLOAD_BASE: elsewhere). Checked against the same MD5s as ever.
 DOWNLOAD_BASE = os.environ.get('STL_DOWNLOAD_BASE', 'https://files.cpressland.io/public/stl-recomp')
@@ -92,6 +104,56 @@ def md5(path, progress=None):
             if progress:
                 progress(done / size)
     return h.hexdigest()
+
+
+def _files(top):
+    """Every file under a folder (or the file itself), less Python's caches."""
+    if os.path.isfile(top):
+        return [top]
+    return sorted(os.path.join(d, n) for d, ds, ns in os.walk(top) for n in ns
+                  if '__pycache__' not in d.split(os.sep) and not n.endswith('.pyc') and n != '.DS_Store')
+
+
+def tree_hash(*paths):
+    """A hash of source files: what a step's output depends on."""
+    h = hashlib.sha1()
+    for top in paths:
+        for p in _files(top):
+            h.update(os.path.relpath(p, os.path.dirname(top)).encode())
+            with open(p, 'rb') as f:
+                h.update(f.read().replace(b'\r\n', b'\n'))
+    return h.hexdigest()[:16]
+
+
+def sync(src, rels, dst):
+    """Make dst/<rel> match src/<rel>, writing a file only when its bytes
+    differ (tpw-recomp's). Returns how many changed."""
+    changed = 0
+    for rel in rels:
+        s, d = os.path.join(src, rel), os.path.join(dst, rel)
+        want = {os.path.relpath(p, s) if os.path.isdir(s) else '' for p in _files(s)} if os.path.exists(s) else set()
+        if os.path.isdir(d):
+            for p in _files(d):
+                if os.path.relpath(p, d) not in want:
+                    os.remove(p)
+                    changed += 1
+        for r in sorted(want):
+            sp, dp = os.path.join(s, r) if r else s, os.path.join(d, r) if r else d
+            if os.path.isfile(dp) and filecmp.cmp(sp, dp, shallow=False):
+                continue
+            os.makedirs(os.path.dirname(dp), exist_ok=True)
+            shutil.copyfile(sp, dp)
+            shutil.copymode(sp, dp)
+            changed += 1
+    return changed
+
+
+def find_pcrecomp(given):
+    for p in (given, os.environ.get('PCRECOMP'), os.path.join(REPO, 'pcrecomp'),
+              os.path.join(os.path.dirname(REPO), 'pcrecomp')):
+        if p and os.path.isdir(os.path.join(p, 'runtime', 'win32hle')):
+            return os.path.abspath(p)
+    raise Failed('no pcrecomp found: give --pcrecomp, or clone it beside this repository (README)')
 
 
 def _progress(lo, hi):
@@ -133,6 +195,14 @@ class Install:
         self.a = a
         self.dest = os.path.abspath(a.dest)
         self.game = os.path.join(self.dest, 'game')
+        self.pcrecomp = find_pcrecomp(a.pcrecomp)
+        self.build = os.path.join(self.dest, 'build')
+        self.src = os.path.join(self.build, 'src')
+        self.stl_src = os.path.join(self.src, 'stl')
+        self.pc_src = os.path.join(self.src, 'pcrecomp')
+        self.analysis = os.path.join(self.build, 'analysis')
+        self.gen = os.path.join(self.build, 'gen')
+        self.env = dict(os.environ, PCRECOMP=self.pc_src)
         self.tmp = os.path.join(self.dest, 'tmp')
         self.state_path = os.path.join(self.dest, 'install.json')
         try:
@@ -149,15 +219,32 @@ class Install:
             json.dump(self.state, f, indent=1)
         os.replace(self.state_path + '.new', self.state_path)
 
+    def run(self, *cmd):
+        """A step's command; its output is shown as it comes."""
+        say('$ ' + ' '.join(os.path.basename(c) if i == 0 else c for i, c in enumerate(cmd)))
+        p = subprocess.run(cmd, cwd=self.stl_src, env=self.env)
+        if p.returncode:
+            raise Failed(f'{os.path.basename(cmd[1] if len(cmd) > 1 else cmd[0])} failed ({p.returncode})')
+
     def keys(self):
-        return {'data': f'data-{DATA_VERSION}'}
+        """From the sources given (the repository's, or the app's), not the staged copy."""
+        tools = os.path.join(self.pcrecomp, 'tools')
+        gen = os.path.join(REPO, 'tools', 'gen')
+        data = f'data-{DATA_VERSION}'
+        analysis = tree_hash(os.path.join(tools, 'pe'), os.path.join(tools, 'cpp'), os.path.join(tools, 'disasm'),
+                             *(os.path.join(gen, n) for n in ('analyse.py', 'data_code_ptrs.py', 'modules.py',
+                                                              'rebase.py')))
+        lift = tree_hash(os.path.join(tools, 'lift'), os.path.join(REPO, 'run_lift.py'))
+        return {'data': data, 'analysis': f'{data}/{analysis}', 'lift': f'{data}/{analysis}/{lift}'}
 
     def stale(self, keys):
         """The parts out of date, in order: one stale part makes all after it so."""
         if not os.path.isfile(os.path.join(self.game, GAME_EXE)):
             self.state.pop('data', None)
+        if not os.path.exists(os.path.join(self.gen, 'recomp_dispatch.c')):
+            self.state.pop('lift', None)
         out = []
-        for k in ('data',):
+        for k in ('data', 'analysis', 'lift'):
             if out or self.state.get(k) != keys[k]:
                 out.append(k)
         return out
@@ -165,10 +252,10 @@ class Install:
     # ---- the steps -------------------------------------------------------
 
     def check(self):
-        try:
-            import olefile  # noqa: F401
-        except ImportError:
-            raise Failed('this Python lacks olefile (README: Python packages)') from None
+        missing = [m for m in ('olefile', 'pefile', 'capstone')
+                   if subprocess.run([sys.executable, '-I', '-c', f'import {m}'], capture_output=True).returncode]
+        if missing:
+            raise Failed(f'this Python lacks {", ".join(missing)} (README: Python packages)')
         os.makedirs(self.dest, exist_ok=True)
         free = shutil.disk_usage(self.dest).free
         if free < SPACE_NEEDED and not os.path.isdir(self.game):
@@ -294,6 +381,22 @@ class Install:
         shutil.rmtree(self.tmp, ignore_errors=True)
         shutil.rmtree(os.path.join(self.dest, 'downloads'), ignore_errors=True)
 
+    def stage(self):
+        """The sources, copied to where the build always finds them."""
+        n = sync(REPO, SOURCES['stl'], self.stl_src) + sync(self.pcrecomp, SOURCES['pcrecomp'], self.pc_src)
+        say(f'{n} source files changed')
+
+    def analyse(self):
+        """Each module's headers, C++ classes, function catalog, code in data."""
+        shutil.rmtree(self.analysis, ignore_errors=True)
+        say('cataloguing the four modules\' functions (a few minutes)...')
+        self.run(sys.executable, '-I', os.path.join(self.stl_src, 'tools', 'gen', 'analyse.py'),
+                 self.game, self.analysis)
+
+    def lift(self):
+        shutil.rmtree(self.gen, ignore_errors=True)
+        self.run(sys.executable, os.path.join(self.stl_src, 'run_lift.py'), '--work', self.analysis, '--out', self.gen)
+
     # ---- the order -------------------------------------------------------
 
     def status(self):
@@ -307,8 +410,11 @@ class Install:
         stale = self.stale(keys)
         fetch = 'data' in stale and self.a.download and not (self.a.iso and self.a.patch)
         steps = [('Checking the tools', self.check, None),
+                 ('Copying the sources', self.stage, None),
                  *([('Downloading the game', self.download, None)] if fetch else []),
-                 ('Installing and patching the game', self.disc, 'data')]
+                 ('Installing and patching the game', self.disc, 'data'),
+                 ('Analysing the game', self.analyse, 'analysis'),
+                 ('Translating the game to C', self.lift, 'lift')]
         todo = [s for s in steps if s[2] is None or s[2] in stale]
         for i, (title, fn, key) in enumerate(todo, 1):
             say(f'@step {i} {len(todo)} {title}')
@@ -323,7 +429,7 @@ class Install:
                 self.save_state()
             say(f'    {title.lower()}: {time.time() - t:.0f} s')
         say('@done')
-        say(f'done. The game is in "{self.game}".')
+        say(f'done. The game is in "{self.game}", its C in "{self.gen}".')
 
 
 def main():
@@ -336,6 +442,7 @@ def main():
     ap.add_argument('--download', action='store_true',
                     help='with no --iso and --patch, download both (STL_DOWNLOAD_BASE)')
     ap.add_argument('--dest', default=DEFAULT_DEST, help='where it goes (default: %(default)s)')
+    ap.add_argument('--pcrecomp', help='the pcrecomp checkout (default: ./pcrecomp, then ../pcrecomp)')
     ap.add_argument('--force', action='store_true', help='redo every step')
     ap.add_argument('--status', action='store_true', help='print what a run would redo, as JSON')
     a = ap.parse_args()

@@ -10,9 +10,11 @@ the remaster conventions (presenter, F-key settings, resolutions).
 
 Everything below is from a first survey of the two files (2026-11-06).
 
-**Progress:** Phase 0 and Phase 1 are done: `tools/install/install.py`
-builds the 1.2 game folder from the two files in under half a minute,
-identical to the survey's tree (README).
+**Progress:** Phases 0–2 are done. `tools/install/install.py` builds the
+1.2 game folder from the two files in under half a minute, identical to the
+survey's tree, then catalogues and lifts all four modules to C with no
+errors; guest C++ exceptions work on win32hle (README; results under
+Phase 2 below).
 
 ## 1. What we have
 
@@ -172,6 +174,44 @@ Each phase ends with something that runs, as TPW's bring-up did.
 - **eh32 on win32hle**: `recomp_eh_push/pop` and the dispatcher, with
   `__declspec(thread)` → the runtime's TLS and `windows.h` → `win32hle.h`.
   Mad3D's C++ and D3DX's compiler both throw.
+
+**Done (2026-11-06).** What it came to:
+
+| Module | Base | Functions | Coverage | C++ frames with catches | Lift errors |
+|---|---|---|---|---|---|
+| `Legacy.exe` | `0x00400000` | 26,033 | 95.0% | 3 (of 184 ebp frames; 1,998 more unwind-only) | 0 |
+| `d3dx9_27.dll` | `0x01000000` (moved) | 14,306 | 89.0% | 1 (of 139) | 0 |
+| `msvcr71.dll` | `0x7C340000` | 3,375 | 99.8% | 0 | 0 |
+| `msvcp71.dll` | `0x7C3A0000` | 3,688 | 99.5% | 133 (of 510, all through `__EH_prolog`) | 0 |
+
+10.7 million lines of C in 121 files, one dispatch table; every function
+with a catch block has a landing pad. It all compiles (`CMakeLists.txt`,
+an object library until Phase 3's host links it): no errors, 32 minutes on a
+10-core M-series Mac at `-O1`, most of it D3DX's 7.5 million lines, so the
+app's first build will want D3DX's chunks smaller or at `-O1`. Found on the way:
+
+- `d3dx9_27.dll` wants `0x00400000` too, so it is rebased to `0x01000000`
+  first (`tools/gen/rebase.py`, 27,763 relocations), above the game and below
+  win32hle's heap. The host must map all four before the first allocation.
+- D3DX has no RTTI; its COM vtables come from the disassembler's own scans.
+  Runs of code-like pointers in its data that the catalog lacks are numeric
+  tables, not vtables (checked: evenly spaced, mid-instruction).
+- Legacy opens most EH frames without a frame pointer (`push -1; push
+  handler`, no `push ebp`): MSVC does that only for unwind-only frames, and
+  all 1,998 are (checked against their FuncInfo), so they need no landing
+  pad; the runtime runs their destructors from the guest's own data.
+- msvcp71 opens 510 frames through msvcr71's `__EH_prolog`, which
+  `lift/eh32.py` did not know: pcrecomp `lift-eh32-eh-prolog`.
+- eh32 is pcrecomp `win32hle-eh32`: `hle_eh_throw` for `_CxxThrowException`,
+  with msvcr71's own export hooked to it (`run_lift.py` HOOK_EXPORTS) so a
+  throw inside the runtime is caught the same way; `eh32_selftest`.
+- `disasm32.py` takes 20 minutes on `d3dx9_27.dll` (81 s on Legacy.exe):
+  in its second discovery round each of 2,911 new entries re-decodes a large
+  body one instruction at a time (15.7 M `disassemble_at` calls for 1,800
+  functions). The output is right; the time matters for the app's first
+  build. A decode cache in pcrecomp is the fix, minding memory.
+- `cpuid` (10 in D3DX, 1 in msvcr71) calls the host's `stl_cpuid`, to be
+  written in Phase 3: no 3DNow!, SSE as the lifter allows.
 
 ### Phase 3 — boot to a black window (1–2 weeks)
 - Host `main.c` on TPW's: drive mapping (`C:` → game folder; the game

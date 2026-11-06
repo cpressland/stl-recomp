@@ -7,9 +7,10 @@ A static recompilation of Mad Doc Software's **Star Trek: Legacy** (Bethesda,
 `runtime/win32hle`, the same way as
 [tpw-recomp](https://github.com/cpressland/tpw-recomp).
 
-**Status: Phase 1 of [the plan](docs/PLAN.md).** The game's folder is built
-from the disc image and the 1.2 patch with no Windows and no installer. The
-lift, the host and the Direct3D 9 renderer come next.
+**Status: Phase 2 of [the plan](docs/PLAN.md).** The game's folder is built
+from the disc image and the 1.2 patch with no Windows and no installer, and
+the game and the three Microsoft DLLs it brings are catalogued and lifted to
+C. The host, and the Direct3D 9 renderer, come next.
 
 ## What you need
 
@@ -59,6 +60,56 @@ keys. The patch replaces 15 whole files (no deltas), from a cabinet inside
 its own database inside its setup program. The `DirectX/` redistributable
 on the disc is left out. Neither `Legacy.exe` 1.0 nor 1.2 has copy
 protection. See [docs/PLAN.md](docs/PLAN.md) for the whole survey.
+
+## The lift
+
+Four modules are lifted, each at its own fixed base (`tools/gen/modules.py`)
+so that one dispatch table holds them all, and a call through one module's
+import slot finds the other module's lifted function once the host binds it:
+
+| Module | Base | What |
+|---|---|---|
+| `Legacy.exe` 1.2 | `0x00400000` | the game: Mad Doc's Mad3D engine, MSVC 7.1 |
+| `d3dx9_27.dll` | `0x01000000` (moved from `0x00400000`) | D3DX, August 2005: the HLSL compiler and effects the game builds its shaders with at startup, texture loading, maths |
+| `msvcr71.dll`, `msvcp71.dll` | their own | the Visual C++ 7.1 C runtime and C++ standard library |
+
+```
+.venv/bin/python -I tools/install/install.py --dest DIR     # after the game folder: analyse and lift
+```
+
+or by hand, with pcrecomp's `stl-local` branch beside this repository
+(below):
+
+```
+.venv/bin/python -I tools/gen/analyse.py GAME work/analysis   # catalogs, a few minutes
+.venv/bin/python run_lift.py --work work/analysis --out work/gen
+cmake -S . -B build-macos -G Ninja && cmake --build build-macos   # compiles the lifted C
+```
+
+Guest C++ exceptions are caught by the guest's own catch blocks: msvcr71's
+`_CxxThrowException` is pcrecomp's `hle_eh_throw` (win32hle `eh32.c`), and
+every function with a catch gets a landing pad (`tools/lift/eh32.py`),
+including the ones msvcp71 opens through `__EH_prolog`.
+
+## pcrecomp: pending merges
+
+As tpw-recomp, this builds against pcrecomp's `main` plus branches still in
+review, merged into a local `stl-local`:
+
+| Branch | What | Needed? |
+|---|---|---|
+| `win32hle-eh32` | guest C++ exceptions on win32hle | **Yes**: the engine and its runtime throw |
+| `lift-eh32-eh-prolog` | landing pads for frames opened through `__EH_prolog` | **Yes**: msvcp71's catches |
+| tpw-recomp's (`win32hle-dinput`, `-gdi-lfwidth`, `-mouse-confine`, `-dsound-cursor`, `-metal`) | DirectInput, Metal and the rest | for the host, Phase 3 on |
+
+```
+cd ../pcrecomp
+git switch -c stl-local origin/main
+git merge --no-edit win32hle-dinput win32hle-gdi-lfwidth win32hle-mouse-confine win32hle-dsound-cursor
+git merge --no-edit win32hle-metal        # screen.c: keep both present(0) and confine_update(); README: both rows
+git merge --no-edit win32hle-eh32         # README: both rows
+git merge --no-edit lift-eh32-eh-prolog
+```
 
 ## License
 
