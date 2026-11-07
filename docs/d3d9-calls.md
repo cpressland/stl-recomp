@@ -7,17 +7,19 @@ game was given no input, so this is start-up and the screens it reaches on
 its own; a mission will add more.
 
 **Shaders** (`STL_DUMP_SHADERS`): D3DX compiles the game's effects at start,
-162 shaders, 94 different:
+and the first mission adds a few: 97 different shaders.
 
 | Model | Count |
 |---|---|
-| `vs_1_1` | 43 |
-| `vs_2_0` | 2 |
 | `ps_1_1` | 16 |
-| `ps_2_0` | 31 |
+| `ps_2_0` | 32 |
 | `ps_2_x` | 2 |
+| `vs_1_1` | 45 |
+| `vs_2_0` | 2 |
 
-81 KB of bytecode in all, the largest 2.6 KB. No Shader Model 3 at the
+125 KB of bytecode in all, the largest 3.7 KB. (A first count, 94 at
+start-up, was of shaders cut short at their constant table, a bug since
+fixed: the table can hold the end token's value.) No Shader Model 3 at the
 default settings. Fixed-function stages are set too (`SetTextureStageState`,
 `SetLight`, `SetMaterial`), so fixed function is needed alongside.
 

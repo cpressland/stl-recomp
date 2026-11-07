@@ -696,8 +696,19 @@ static void v_StretchRect(void) {   /* (src, src rect, dst, dst rect, filter) */
 /* Shader bytecode: version token, instructions, end token 0x0000FFFF.
  * Kept whole; dumped when STL_DUMP_SHADERS names a folder. */
 static uint32_t token_len(uint32_t code) {
-    uint32_t n = 1;
-    while (n < (1u << 20) && MEM32(code + 4 * (n - 1)) != 0x0000FFFFu) n++;
+    /* The end token, found where an instruction would start: a comment
+     * (D3DX's constant table opens every shader) is skipped by its length,
+     * a def's four raw values by its, as either may hold 0x0000FFFF. */
+    uint32_t ver = MEM32(code), n = 1;
+    int sm2 = ((ver >> 8) & 0xFF) >= 2;
+    while (n < (1u << 20)) {
+        uint32_t t = MEM32(code + 4 * n);
+        if (t == 0x0000FFFFu) return 4 * (n + 1);
+        if ((t & 0xFFFF) == 0xFFFE) { n += 1 + ((t >> 16) & 0x7FFF); continue; }
+        if (sm2 && !(t & 0x80000000u)) { n += 1 + ((t >> 24) & 0xF); continue; }
+        if ((t & 0xFFFF) == 81 && !(t & 0x80000000u)) { n += 6; continue; }   /* shader model 1's def */
+        n++;
+    }
     return 4 * n;
 }
 static void dump(const char *kind, uint32_t code, uint32_t len) {

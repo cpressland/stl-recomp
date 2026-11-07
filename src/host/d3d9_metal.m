@@ -558,6 +558,11 @@ static id<MTLRenderPipelineState> pipeline(dev_t_ *d, id<MTLFunction> vs, id<MTL
             if (u == 9) u = 0;                                  /* POSITIONT feeds a dcl_position */
             if (u == vsb->info.input_usage[r] && k.e[i].index == vsb->info.input_index[r]) { found = (int)i; break; }
         }
+        if (getenv("STL_TRACE_LAYOUT"))
+            fprintf(stderr, "[layout] vs %p v%d usage %u/%u -> %s (type %d, stream %d, offset %d, stride %u)\n", (__bridge void *)vs, r,
+                    vsb->info.input_usage[r], vsb->info.input_index[r], found < 0 ? "MISSING" : "found",
+                    found < 0 ? -1 : k.e[found].type, found < 0 ? -1 : k.e[found].stream, found < 0 ? -1 : k.e[found].offset,
+                    found < 0 ? 0 : strides[k.e[found].stream]);
         if (found < 0) {                                        /* not in the declaration: zeros */
             vd.attributes[r].format = MTLVertexFormatFloat4, vd.attributes[r].offset = 0, vd.attributes[r].bufferIndex = 7;
             need_zero = 1;

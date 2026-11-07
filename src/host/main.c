@@ -32,6 +32,9 @@ static int g_headless;
 static int g_windowed;
 static unsigned g_watchdog_s;
 
+int  script_arg(int argc, char **argv, int i);   /* script.c (tpw-recomp's): scripted input */
+void script_start(void);
+
 /* A function the lift left as a stub (run_lift.py writes none, today). */
 void recomp_not_lifted(uint32_t va) { hle_fatal("sub_%08X was not lifted", va); }
 
@@ -95,7 +98,8 @@ static void usage(void) {
            "  --headless   no window, no sound device\n"
            "  --watchdog S stop after S seconds, saying where the game was\n"
            "  --trace      every import call, as it is made\n"
-           "  --verbose    every stub as it is bound, every Direct3D 9 call\n");
+           "  --verbose    every stub as it is bound, every Direct3D 9 call\n"
+           "  --move x,y@s --click x,y@s --rclick x,y@s --key vk@s   input, s seconds after the start\n");
 }
 
 /* The program's main (exe.c), and the app's way in. */
@@ -104,6 +108,8 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
     int run = 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
+        int n = script_arg(argc, argv, i);
+        if (n) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = 1;
         else if (!strcmp(argv[i], "--windowed")) g_windowed = 1;
@@ -166,6 +172,7 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
     }
     hle_on_exit = on_exit_summary;
     if (stl_attach_dlls() != 0) return 1;
+    script_start();
     printf("  entering 0x%08X\n\n", g_stl_mod[0].img.entry);
     fflush(stdout);
     uint32_t rc = hle_call_guest(g_stl_mod[0].img.entry, 0, NULL);
