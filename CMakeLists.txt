@@ -98,6 +98,18 @@ if(STL_MEM_BASE)
 endif()
 target_compile_options(stl_obj PRIVATE -fno-strict-aliasing -fwrapv)
 target_link_libraries(stl_obj PUBLIC stl_sdl pthread m)
+# Movies: pcrecomp's bink.c decodes Bink through ffmpeg when it is there
+# (pkg-config; Homebrew's ffmpeg). Without it they are skipped, as the
+# game's own code allows. The app carries no ffmpeg yet.
+if(NOT STL_SDL_FRAMEWORKS)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(FFMPEG IMPORTED_TARGET libavformat libavcodec libavutil libswresample libswscale)
+  if(FFMPEG_FOUND)
+    target_compile_definitions(stl_obj PRIVATE HLE_WITH_FFMPEG)
+    target_link_libraries(stl_obj PUBLIC PkgConfig::FFMPEG)
+    message(STATUS "movies: ffmpeg ${FFMPEG_libavcodec_VERSION}")
+  endif()
+endif()
 if(APPLE)
   target_sources(stl_obj PRIVATE ${HLE}/d3d_metal.m src/host/d3d9_metal.m)
   set_source_files_properties(${HLE}/d3d_metal.m PROPERTIES COMPILE_OPTIONS "-fno-objc-arc")
