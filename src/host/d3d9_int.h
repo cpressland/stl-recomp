@@ -76,7 +76,17 @@ typedef struct {
     uint32_t light[8][26];                 /* D3DLIGHT9 */
     uint32_t light_on[8];
     void *gpu;                             /* the backend's device state */
+    void *rec;                             /* between BeginStateBlock and EndStateBlock: the block (sblock_t) */
 } dev_t_;
+
+/* A state block: pieces of dev_t_ (offset, size) and their values. */
+typedef struct { uint32_t off, size, at; } sbop_t;
+typedef struct {
+    uint32_t device;
+    uint32_t n, cap, len, data_cap;
+    sbop_t *ops;
+    uint8_t *data;
+} sblock_t;
 
 /* ---- formats and memory (d3d9.c) ---- */
 int      block_bytes(uint32_t format);          /* a compressed format's 4x4 block, else 0 */

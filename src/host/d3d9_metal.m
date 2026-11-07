@@ -49,6 +49,7 @@
     NSMutableDictionary<NSData *, id<MTLDepthStencilState>> *depths;
     NSMutableDictionary<NSData *, id<MTLSamplerState>> *samplers;
     NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> *blits;
+    NSMutableDictionary<NSData *, id<MTLRenderPipelineState>> *clears;
     id<MTLLibrary> blit_lib;
     id<MTLBuffer> zeros;
     /* pending clear, for the next pass */
@@ -278,7 +279,12 @@ static NSString *const BLIT_MSL =
      "    float2 c = float2(id & 1, id >> 1);\n"
      "    V o; o.pos = float4(mix(r[0].xy, r[0].zw, c), 0, 1); o.uv = mix(r[1].xy, r[1].zw, c); return o; }\n"
      "fragment float4 blit_f(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]]) {\n"
-     "    return t.sample(s, in.uv); }\n";
+     "    return t.sample(s, in.uv); }\n"
+     "struct C { float4 pos [[position]]; };\n"
+     "vertex C clear_v(uint id [[vertex_id]], constant float4 *r [[buffer(0)]]) {\n"
+     "    float2 c = float2(id & 1, id >> 1);\n"
+     "    C o; o.pos = float4(mix(r[0].xy, r[0].zw, c), r[1].x, 1); return o; }\n"
+     "fragment float4 clear_f(C in [[stage_in]], constant float4 *r [[buffer(0)]]) { return r[2]; }\n";
 
 void gpu_device(dev_t_ *d) {
     if (!G) {
@@ -292,6 +298,7 @@ void gpu_device(dev_t_ *d) {
         G->depths = [NSMutableDictionary new];
         G->samplers = [NSMutableDictionary new];
         G->blits = [NSMutableDictionary new];
+        G->clears = [NSMutableDictionary new];
         G->zeros = [G->dev newBufferWithLength:256 options:MTLResourceStorageModeShared];
         NSError *e = nil;
         G->blit_lib = [G->dev newLibraryWithSource:BLIT_MSL options:nil error:&e];
@@ -360,19 +367,108 @@ static id<MTLRenderCommandEncoder> pass(dev_t_ *d) {
     return G->enc;
 }
 
-/* Clear(count, rects, flags, color, z, stencil): the targets' load action,
- * for a clear of all of them (what the game does). */
+/* A clear of part of the targets: a quad over each rectangle, writing what
+ * the flags say (colour; depth by its z; stencil by replacing it). */
+static void clear_quads(dev_t_ *d, const int32_t *rects, uint32_t n, uint32_t flags, uint32_t color, float z, uint32_t stencil) {
+    id<MTLRenderCommandEncoder> enc = pass(d);
+    uint32_t key[8] = { 0 };
+    for (int i = 0; i < 4; i++)
+        if (d->rt[i]) { id<MTLTexture> t = texture_of(OBJ(d->rt[i], res_t)); key[i] = t ? (uint32_t)t.pixelFormat : 0; }
+    MTLPixelFormat dpf = MTLPixelFormatInvalid;
+    if (d->ds) { id<MTLTexture> t = texture_of(OBJ(d->ds, res_t)); if (t && is_depth_pf(t.pixelFormat)) dpf = t.pixelFormat; }
+    key[4] = (uint32_t)dpf, key[5] = flags & 1;
+    NSData *k = [NSData dataWithBytes:key length:sizeof key];
+    id<MTLRenderPipelineState> pl = G->clears[k];
+    if (!pl) {
+        MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
+        pd.vertexFunction = [G->blit_lib newFunctionWithName:@"clear_v"];
+        pd.fragmentFunction = [G->blit_lib newFunctionWithName:@"clear_f"];
+        for (int i = 0; i < 4; i++) {
+            if (!key[i]) continue;
+            pd.colorAttachments[i].pixelFormat = (MTLPixelFormat)key[i];
+            pd.colorAttachments[i].writeMask = (flags & 1) ? MTLColorWriteMaskAll : MTLColorWriteMaskNone;
+        }
+        if (dpf != MTLPixelFormatInvalid) pd.depthAttachmentPixelFormat = dpf;
+        if (dpf == MTLPixelFormatDepth32Float_Stencil8) pd.stencilAttachmentPixelFormat = dpf;
+        NSError *e = nil;
+        pl = [G->dev newRenderPipelineStateWithDescriptor:pd error:&e];
+        if (!pl) { fprintf(stderr, "[metal] clear pipeline: %s\n", e.localizedDescription.UTF8String); return; }
+        G->clears[k] = pl;
+    }
+    MTLDepthStencilDescriptor *dd = [MTLDepthStencilDescriptor new];
+    dd.depthCompareFunction = MTLCompareFunctionAlways;
+    dd.depthWriteEnabled = (flags & 2) != 0;
+    if (flags & 4) {
+        MTLStencilDescriptor *sd = [MTLStencilDescriptor new];
+        sd.stencilCompareFunction = MTLCompareFunctionAlways;
+        sd.depthStencilPassOperation = MTLStencilOperationReplace;
+        dd.frontFaceStencil = sd, dd.backFaceStencil = sd;
+    }
+    [enc setRenderPipelineState:pl];
+    [enc setDepthStencilState:[G->dev newDepthStencilStateWithDescriptor:dd]];
+    [enc setStencilReferenceValue:stencil];
+    [enc setCullMode:MTLCullModeNone];
+    [enc setTriangleFillMode:MTLTriangleFillModeFill];
+    [enc setViewport:(MTLViewport){ 0, 0, (double)G->pass_w, (double)G->pass_h, 0, 1 }];
+    [enc setScissorRect:(MTLScissorRect){ 0, 0, (NSUInteger)G->pass_w, (NSUInteger)G->pass_h }];
+    float w = (float)G->pass_w, h = (float)G->pass_h;
+    for (uint32_t i = 0; i < n; i++) {
+        const int32_t *r = rects + 4 * i;
+        if (r[2] <= r[0] || r[3] <= r[1]) continue;
+        float c[12] = { r[0] / w * 2 - 1, 1 - r[1] / h * 2, r[2] / w * 2 - 1, 1 - r[3] / h * 2, z, 0, 0, 0,
+                        ((color >> 16) & 255) / 255.0f, ((color >> 8) & 255) / 255.0f, (color & 255) / 255.0f, (color >> 24) / 255.0f };
+        [enc setVertexBytes:c length:sizeof c atIndex:0];
+        [enc setFragmentBytes:c length:sizeof c atIndex:0];
+        [enc drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+    }
+}
+
+/* Clear(count, rects, flags, color, z, stencil): of the whole target, the
+ * pass's load action; of part (the viewport, the scissor, rectangles), quads. */
 void gpu_clear(dev_t_ *d, uint32_t nrects, uint32_t rects, uint32_t flags, uint32_t color, float z, uint32_t stencil) {
     if (!G) return;
-    TRACE("Clear flags %X color %08X z %g rt %08X ds %08X vp %u,%u %ux%u\n", flags, color, z, d->rt[0], d->ds,
-          d->viewport[0], d->viewport[1], d->viewport[2], d->viewport[3]);
-    static int told;
-    if ((nrects || d->viewport[0] || d->viewport[1]) && !told++)
-        fprintf(stderr, "[metal] a Clear of part of the target: cleared whole (not done yet)\n");
-    (void)rects;
-    end_encoder();
-    G->clear_flags = flags & 7, G->clear_color = color, G->clear_z = z, G->clear_stencil = stencil;
-    pass(d);                                                /* the pass that clears */
+    TRACE("Clear flags %X color %08X z %g rt %08X ds %08X vp %u,%u %ux%u rects %u\n", flags, color, z, d->rt[0], d->ds,
+          d->viewport[0], d->viewport[1], d->viewport[2], d->viewport[3], nrects);
+    /* the target's size */
+    int tw = 0, th = 0;
+    uint32_t first = d->rt[0] ? d->rt[0] : d->ds;
+    if (first) {
+        res_t *s = OBJ(first, res_t);
+        id<MTLTexture> t = texture_of(s);
+        if (t) tw = (int)level_dim((uint32_t)t.width, s->parent ? s->level : 0), th = (int)level_dim((uint32_t)t.height, s->parent ? s->level : 0);
+    }
+    /* what is cleared: the viewport, within the scissor if it is on, each rectangle within that */
+    int32_t box[4] = { (int32_t)d->viewport[0], (int32_t)d->viewport[1], (int32_t)(d->viewport[0] + d->viewport[2]),
+                       (int32_t)(d->viewport[1] + d->viewport[3]) };
+    if (d->rs[174]) {
+        box[0] = box[0] > (int32_t)d->scissor[0] ? box[0] : (int32_t)d->scissor[0];
+        box[1] = box[1] > (int32_t)d->scissor[1] ? box[1] : (int32_t)d->scissor[1];
+        box[2] = box[2] < (int32_t)d->scissor[2] ? box[2] : (int32_t)d->scissor[2];
+        box[3] = box[3] < (int32_t)d->scissor[3] ? box[3] : (int32_t)d->scissor[3];
+    }
+    if (box[0] < 0) box[0] = 0;
+    if (box[1] < 0) box[1] = 0;
+    if (box[2] > tw) box[2] = tw;
+    if (box[3] > th) box[3] = th;
+    if (!nrects && box[0] == 0 && box[1] == 0 && box[2] >= tw && box[3] >= th) {
+        end_encoder();
+        G->clear_flags = flags & 7, G->clear_color = color, G->clear_z = z, G->clear_stencil = stencil;
+        pass(d);                                            /* the pass that clears */
+        return;
+    }
+    uint32_t n = nrects ? nrects : 1;
+    int32_t *r = malloc(16 * n);
+    for (uint32_t i = 0; i < n; i++) {
+        int32_t *q = r + 4 * i;
+        if (nrects) for (int k = 0; k < 4; k++) q[k] = (int32_t)MEM32(rects + 16 * i + 4 * k);
+        else memcpy(q, box, 16);
+        if (q[0] < box[0]) q[0] = box[0];
+        if (q[1] < box[1]) q[1] = box[1];
+        if (q[2] > box[2]) q[2] = box[2];
+        if (q[3] > box[3]) q[3] = box[3];
+    }
+    clear_quads(d, r, n, flags & 7, color, z, stencil);
+    free(r);
 }
 
 /* ---- shaders ------------------------------------------------------------------------ */

@@ -370,6 +370,31 @@ static void d_CreateDevice(void) {
     RET(D3D_OK, 7);
 }
 
+/* ---- state blocks --------------------------------------------------------------
+ * A block is a list of pieces of the device's state (an offset into dev_t_
+ * and a size) with their values. Between BeginStateBlock and
+ * EndStateBlock a setter records its piece instead of setting it (set());
+ * CreateStateBlock lists all of a type's; Capture reads each piece's value
+ * from the device, Apply writes it back. */
+static void sb_put(sblock_t *b, uint32_t off, uint32_t size, const void *val) {
+    for (uint32_t i = 0; i < b->n; i++)
+        if (b->ops[i].off == off && b->ops[i].size == size) { memcpy(b->data + b->ops[i].at, val, size); return; }
+    if (b->n == b->cap) { b->cap = b->cap ? 2 * b->cap : 64; b->ops = realloc(b->ops, b->cap * sizeof *b->ops); }
+    if (b->len + size > b->data_cap) {
+        while (b->len + size > b->data_cap) b->data_cap = b->data_cap ? 2 * b->data_cap : 4096;
+        b->data = realloc(b->data, b->data_cap);
+    }
+    b->ops[b->n++] = (sbop_t){ off, size, b->len };
+    memcpy(b->data + b->len, val, size);
+    b->len += size;
+}
+/* A setter's write: recorded while a block is being recorded, else made. */
+static void set(dev_t_ *d, void *field, const void *val, uint32_t size) {
+    if (d->rec) sb_put((sblock_t *)d->rec, (uint32_t)((uint8_t *)field - (uint8_t *)d), size, val);
+    else memmove(field, val, size);
+}
+static void set32(dev_t_ *d, uint32_t *field, uint32_t v) { set(d, field, &v, 4); }
+
 /* ---- IDirect3DDevice9 --------------------------------------------------------- */
 #define DEV(o) OBJ(o, dev_t_)
 #define RES(o) OBJ(o, res_t)
@@ -540,7 +565,8 @@ static void v_GetDepthStencilSurface(void) {
 static void v_SetTransform(void) {   /* (state, matrix) */
     count();
     uint32_t t = A32(1);
-    if (t < 512) memcpy(DEV(A32(0))->transform[t], hle_ptr(A32(2)), 64);
+    dev_t_ *d = DEV(A32(0));
+    if (t < 512) set(d, d->transform[t], hle_ptr(A32(2)), 64);
     RET(D3D_OK, 3);
 }
 static void v_GetTransform(void) {
@@ -549,15 +575,28 @@ static void v_GetTransform(void) {
     if (t < 512) memcpy(hle_ptr(A32(2)), DEV(A32(0))->transform[t], 64);
     RET(D3D_OK, 3);
 }
-static void v_SetViewport(void) { count(); memcpy(DEV(A32(0))->viewport, hle_ptr(A32(1)), 24); RET(D3D_OK, 2); }
+static void v_SetViewport(void) { count(); dev_t_ *d = DEV(A32(0)); set(d, d->viewport, hle_ptr(A32(1)), 24); RET(D3D_OK, 2); }
 static void v_GetViewport(void) { count(); memcpy(hle_ptr(A32(1)), DEV(A32(0))->viewport, 24); RET(D3D_OK, 2); }
-static void v_SetMaterial(void) { count(); memcpy(DEV(A32(0))->material, hle_ptr(A32(1)), 68); RET(D3D_OK, 2); }
+static void v_SetMaterial(void) { count(); dev_t_ *d = DEV(A32(0)); set(d, d->material, hle_ptr(A32(1)), 68); RET(D3D_OK, 2); }
 static void v_GetMaterial(void) { count(); memcpy(hle_ptr(A32(1)), DEV(A32(0))->material, 68); RET(D3D_OK, 2); }
-static void v_GetLight(void) { count(); memset(hle_ptr(A32(2)), 0, 104); RET(D3D_OK, 3); }
-static void v_GetLightEnable(void) { count(); MEM32(A32(2)) = 0; RET(D3D_OK, 3); }
+static void v_SetLight(void) {   /* (index, D3DLIGHT9*) */
+    count();
+    dev_t_ *d = DEV(A32(0));
+    if (A32(1) < 8) set(d, d->light[A32(1)], hle_ptr(A32(2)), 104);
+    RET(D3D_OK, 3);
+}
+static void v_GetLight(void) {
+    count();
+    dev_t_ *d = DEV(A32(0));
+    if (A32(1) < 8) memcpy(hle_ptr(A32(2)), d->light[A32(1)], 104); else memset(hle_ptr(A32(2)), 0, 104);
+    RET(D3D_OK, 3);
+}
+static void v_LightEnable(void) { count(); dev_t_ *d = DEV(A32(0)); if (A32(1) < 8) set32(d, &d->light_on[A32(1)], A32(2) != 0); RET(D3D_OK, 3); }
+static void v_GetLightEnable(void) { count(); dev_t_ *d = DEV(A32(0)); MEM32(A32(2)) = A32(1) < 8 ? d->light_on[A32(1)] : 0; RET(D3D_OK, 3); }
 static void v_SetClipPlane(void) {
     count();
-    if (A32(1) < 6) memcpy(DEV(A32(0))->clip[A32(1)], hle_ptr(A32(2)), 16);
+    dev_t_ *d = DEV(A32(0));
+    if (A32(1) < 6) set(d, d->clip[A32(1)], hle_ptr(A32(2)), 16);
     RET(D3D_OK, 3);
 }
 static void v_GetClipPlane(void) {
@@ -568,7 +607,8 @@ static void v_GetClipPlane(void) {
 static void v_SetRenderState(void) {
     count();
     uint32_t s = A32(1);
-    if (s < MAX_RS) DEV(A32(0))->rs[s] = A32(2);
+    dev_t_ *d = DEV(A32(0));
+    if (s < MAX_RS) set32(d, &d->rs[s], A32(2));
     RET(D3D_OK, 3);
 }
 static void v_GetRenderState(void) {
@@ -577,9 +617,64 @@ static void v_GetRenderState(void) {
     MEM32(A32(2)) = s < MAX_RS ? DEV(A32(0))->rs[s] : 0;
     RET(D3D_OK, 3);
 }
-static uint32_t new_stateblock(uint32_t dev) { void *r; uint32_t o = make(g_vt_sb, 8, &r); *(uint32_t *)r = dev; return o; }
-static void v_CreateStateBlock(void) { count(); out_obj(A32(2), new_stateblock(A32(0))); RET(D3D_OK, 3); }
-static void v_EndStateBlock(void) { count(); out_obj(A32(1), new_stateblock(A32(0))); RET(D3D_OK, 2); }
+static uint32_t new_stateblock(uint32_t dev, sblock_t **out) {
+    sblock_t *b;
+    uint32_t o = make(g_vt_sb, sizeof(sblock_t), (void **)&b);
+    b->device = dev;
+    if (out) *out = b;
+    return o;
+}
+#define PIECE(b, d, field) sb_put(b, (uint32_t)((uint8_t *)&(d)->field - (uint8_t *)(d)), sizeof (d)->field, &(d)->field)
+/* CreateStateBlock(type, &block): the state now, all of it (D3DSBT_ALL, and
+ * the pixel and vertex types too, which then restore a little more than
+ * they name: captured at the same moment, harmless). */
+static void v_CreateStateBlock(void) {
+    count();
+    dev_t_ *d = DEV(A32(0));
+    sblock_t *b;
+    uint32_t o = new_stateblock(A32(0), &b);
+    PIECE(b, d, rs); PIECE(b, d, tss); PIECE(b, d, samp); PIECE(b, d, tex); PIECE(b, d, stream);
+    PIECE(b, d, stream_freq); PIECE(b, d, indices); PIECE(b, d, decl); PIECE(b, d, fvf); PIECE(b, d, vs); PIECE(b, d, ps);
+    PIECE(b, d, viewport); PIECE(b, d, transform); PIECE(b, d, scissor); PIECE(b, d, material); PIECE(b, d, clip);
+    PIECE(b, d, vsc); PIECE(b, d, psc); PIECE(b, d, vsi); PIECE(b, d, psi); PIECE(b, d, vsb); PIECE(b, d, psb);
+    PIECE(b, d, light); PIECE(b, d, light_on);
+    out_obj(A32(2), o);
+    RET(D3D_OK, 3);
+}
+static void v_BeginStateBlock(void) {
+    count();
+    dev_t_ *d = DEV(A32(0));
+    if (d->rec) RET(D3DERR_INVALIDCALL, 1);
+    d->rec = calloc(1, sizeof(sblock_t));
+    RET(D3D_OK, 1);
+}
+static void v_EndStateBlock(void) {   /* (&block) */
+    count();
+    dev_t_ *d = DEV(A32(0));
+    sblock_t *rec = (sblock_t *)d->rec, *b;
+    if (!rec) RET(D3DERR_INVALIDCALL, 2);
+    d->rec = NULL;
+    uint32_t o = new_stateblock(A32(0), &b);
+    b->n = rec->n, b->cap = rec->cap, b->len = rec->len, b->data_cap = rec->data_cap, b->ops = rec->ops, b->data = rec->data;
+    free(rec);
+    out_obj(A32(1), o);
+    RET(D3D_OK, 2);
+}
+static void sb_Capture(void) {
+    count();
+    sblock_t *b = OBJ(A32(0), sblock_t);
+    uint8_t *d = (uint8_t *)OBJ(b->device, dev_t_);
+    for (uint32_t i = 0; i < b->n; i++) memcpy(b->data + b->ops[i].at, d + b->ops[i].off, b->ops[i].size);
+    RET(D3D_OK, 1);
+}
+static void sb_Apply(void) {
+    count();
+    sblock_t *b = OBJ(A32(0), sblock_t);
+    dev_t_ *dv = OBJ(b->device, dev_t_);
+    uint8_t *d = (uint8_t *)dv;
+    for (uint32_t i = 0; i < b->n; i++) set(dv, d + b->ops[i].off, b->data + b->ops[i].at, b->ops[i].size);
+    RET(D3D_OK, 1);
+}
 /* A sampler: 0-15, D3DDMAPSAMPLER (256), D3DVERTEXTEXTURESAMPLER0-3 (257-260). */
 static uint32_t stage_index(uint32_t s) { return s < MAX_SAMP ? s : s >= 257 && s <= 260 ? MAX_SAMP + 1 + (s - 257) : MAX_SAMP; }
 static void v_GetTexture(void) {
@@ -589,7 +684,7 @@ static void v_GetTexture(void) {
     out_obj(A32(2), t);
     RET(D3D_OK, 3);
 }
-static void v_SetTexture(void) { count(); DEV(A32(0))->tex[stage_index(A32(1))] = A32(2); RET(D3D_OK, 3); }
+static void v_SetTexture(void) { count(); dev_t_ *d = DEV(A32(0)); set32(d, &d->tex[stage_index(A32(1))], A32(2)); RET(D3D_OK, 3); }
 static void v_GetTextureStageState(void) {
     count();
     uint32_t st = A32(1), ty = A32(2);
@@ -599,7 +694,8 @@ static void v_GetTextureStageState(void) {
 static void v_SetTextureStageState(void) {
     count();
     uint32_t st = A32(1), ty = A32(2);
-    if (st < MAX_STAGES && ty < MAX_TSS) DEV(A32(0))->tss[st][ty] = A32(3);
+    dev_t_ *d = DEV(A32(0));
+    if (st < MAX_STAGES && ty < MAX_TSS) set32(d, &d->tss[st][ty], A32(3));
     RET(D3D_OK, 4);
 }
 static void v_GetSamplerState(void) {
@@ -611,12 +707,13 @@ static void v_GetSamplerState(void) {
 static void v_SetSamplerState(void) {
     count();
     uint32_t s = stage_index(A32(1)), ty = A32(2);
-    if (ty < 14) DEV(A32(0))->samp[s][ty] = A32(3);
+    dev_t_ *d = DEV(A32(0));
+    if (ty < 14) set32(d, &d->samp[s][ty], A32(3));
     RET(D3D_OK, 4);
 }
 static void v_ValidateDevice(void) { count(); if (A32(1)) MEM32(A32(1)) = 1; RET(D3D_OK, 2); }
 static void v_GetCurrentTexturePalette(void) { count(); MEM32(A32(1)) = 0; RET(D3D_OK, 2); }
-static void v_SetScissorRect(void) { count(); memcpy(DEV(A32(0))->scissor, hle_ptr(A32(1)), 16); RET(D3D_OK, 2); }
+static void v_SetScissorRect(void) { count(); dev_t_ *d = DEV(A32(0)); set(d, d->scissor, hle_ptr(A32(1)), 16); RET(D3D_OK, 2); }
 static void v_GetScissorRect(void) { count(); memcpy(hle_ptr(A32(1)), DEV(A32(0))->scissor, 16); RET(D3D_OK, 2); }
 static void v_SetSoftwareVertexProcessing(void) { count(); DEV(A32(0))->sw_vp = A32(1); RET(D3D_OK, 2); }
 static void v_GetSoftwareVertexProcessing(void) { count(); RET(DEV(A32(0))->sw_vp, 1); }
@@ -756,19 +853,22 @@ static void v_CreateVertexDeclaration(void) {   /* (elements, &decl): 8-byte ele
     RET(D3D_OK, 3);
 }
 #define GETSET(name, field)                                                        \
-    static void v_Set##name(void) { count(); DEV(A32(0))->field = A32(1); RET(D3D_OK, 2); } \
+    static void v_Set##name(void) { count(); dev_t_ *d = DEV(A32(0)); set32(d, &d->field, A32(1)); \
+                                    if (&d->field == &d->decl && A32(1)) set32(d, &d->fvf, 0); RET(D3D_OK, 2); } \
     static void v_Get##name(void) { count(); uint32_t x = DEV(A32(0))->field; addref(x); out_obj(A32(1), x); RET(D3D_OK, 2); }
 GETSET(VertexDeclaration, decl)
 GETSET(VertexShader, vs)
 GETSET(PixelShader, ps)
 GETSET(Indices, indices)
-static void v_SetFVF(void) { count(); DEV(A32(0))->fvf = A32(1); RET(D3D_OK, 2); }
+/* An FVF and a declaration replace each other. */
+static void v_SetFVF(void) { count(); dev_t_ *d = DEV(A32(0)); set32(d, &d->fvf, A32(1)); set32(d, &d->decl, 0); RET(D3D_OK, 2); }
 static void v_GetFVF(void) { count(); MEM32(A32(1)) = DEV(A32(0))->fvf; RET(D3D_OK, 2); }
 #define CONSTS(name, arr, max, sz)                                                  \
     static void v_Set##name(void) {                                                 \
         count();                                                                    \
         uint32_t s = A32(1), n = A32(3);                                            \
-        if (s < max) memcpy(&DEV(A32(0))->arr[s], hle_ptr(A32(2)), (s + n > max ? max - s : n) * sz); \
+        dev_t_ *d_ = DEV(A32(0));                                                  \
+        if (s < max) set(d_, &d_->arr[s], hle_ptr(A32(2)), (s + n > max ? max - s : n) * sz); \
         RET(D3D_OK, 4);                                                             \
     }                                                                               \
     static void v_Get##name(void) {                                                 \
@@ -786,7 +886,9 @@ CONSTS(PixelShaderConstantB, psb, 16, 4)
 static void v_SetStreamSource(void) {   /* (stream, vb, offset, stride) */
     count();
     uint32_t s = A32(1);
-    if (s < 16) { uint32_t *x = DEV(A32(0))->stream[s]; x[0] = A32(2), x[1] = A32(3), x[2] = A32(4); }
+    dev_t_ *d = DEV(A32(0));
+    uint32_t v[3] = { A32(2), A32(3), A32(4) };
+    if (s < 16) set(d, d->stream[s], v, 12);
     RET(D3D_OK, 5);
 }
 static void v_GetStreamSource(void) {
@@ -799,7 +901,7 @@ static void v_GetStreamSource(void) {
     if (A32(4)) MEM32(A32(4)) = x[2];
     RET(D3D_OK, 5);
 }
-static void v_SetStreamSourceFreq(void) { count(); if (A32(1) < 16) DEV(A32(0))->stream_freq[A32(1)] = A32(2); RET(D3D_OK, 3); }
+static void v_SetStreamSourceFreq(void) { count(); dev_t_ *d = DEV(A32(0)); if (A32(1) < 16) set32(d, &d->stream_freq[A32(1)], A32(2)); RET(D3D_OK, 3); }
 static void v_GetStreamSourceFreq(void) { count(); MEM32(A32(2)) = A32(1) < 16 ? DEV(A32(0))->stream_freq[A32(1)] : 1; RET(D3D_OK, 3); }
 static void v_CreateQuery(void) {   /* (type, &query): NULL asks whether the type is supported */
     count();
@@ -993,9 +1095,9 @@ static void vtables(void) {
         { D "BeginScene", ok0 }, { D "EndScene", ok0 }, { D "Clear", v_Clear }, { D "SetTransform", v_SetTransform },
         { D "GetTransform", v_GetTransform }, { D "MultiplyTransform", ok2 }, { D "SetViewport", v_SetViewport },
         { D "GetViewport", v_GetViewport }, { D "SetMaterial", v_SetMaterial }, { D "GetMaterial", v_GetMaterial },
-        { D "SetLight", ok2 }, { D "GetLight", v_GetLight }, { D "LightEnable", ok2 }, { D "GetLightEnable", v_GetLightEnable },
+        { D "SetLight", v_SetLight }, { D "GetLight", v_GetLight }, { D "LightEnable", v_LightEnable }, { D "GetLightEnable", v_GetLightEnable },
         { D "SetClipPlane", v_SetClipPlane }, { D "GetClipPlane", v_GetClipPlane }, { D "SetRenderState", v_SetRenderState },
-        { D "GetRenderState", v_GetRenderState }, { D "CreateStateBlock", v_CreateStateBlock }, { D "BeginStateBlock", ok0 },
+        { D "GetRenderState", v_GetRenderState }, { D "CreateStateBlock", v_CreateStateBlock }, { D "BeginStateBlock", v_BeginStateBlock },
         { D "EndStateBlock", v_EndStateBlock }, { D "SetClipStatus", ok1 }, { D "GetClipStatus", ok1 },
         { D "GetTexture", v_GetTexture }, { D "SetTexture", v_SetTexture },
         { D "GetTextureStageState", v_GetTextureStageState }, { D "SetTextureStageState", v_SetTextureStageState },
@@ -1064,7 +1166,7 @@ static void vtables(void) {
         { "IDirect3DQuery9::GetData", q_GetData }, { 0, 0 } };
     static const win32hle_shim sb[] = {
         UNK("IDirect3DStateBlock9"), { "IDirect3DStateBlock9::GetDevice", u_GetDevice },
-        { "IDirect3DStateBlock9::Capture", ok0 }, { "IDirect3DStateBlock9::Apply", ok0 }, { 0, 0 } };
+        { "IDirect3DStateBlock9::Capture", sb_Capture }, { "IDirect3DStateBlock9::Apply", sb_Apply }, { 0, 0 } };
     g_vt_d3d = hle_com_vtable(d3d);
     g_vt_dev = hle_com_vtable(dev);
     g_vt_tex = hle_com_vtable(tex);
