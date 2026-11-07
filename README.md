@@ -121,6 +121,10 @@ STL_SHOT=shots STL_SHOT_EVERY=5000 stl --game DIR/game --run --headless --mute -
     --click 512,408@75 --click 512,393@95                    # the menu, then the first mission
 ```
 
+`tools/test/smoke.sh BUILD/stl GAME` does that and checks it: the intro,
+the menu and the first mission all draw, the ship takes the throttle,
+nothing faults (about four minutes).
+
 `STL_SHOT=DIR` writes the back buffer every `STL_SHOT_EVERY` frames;
 `STL_TRACE_FRAME=N` lists every draw, clear and StretchRect of frame N;
 `STL_TRACE_LAYOUT=1` how each pipeline matched shader inputs to the vertex

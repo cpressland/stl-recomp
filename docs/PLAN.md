@@ -330,11 +330,17 @@ readback a frame. What it took beyond the plan:
 - state blocks that record (D3DX's effects save and restore through them),
   SetFVF and SetVertexDeclaration replacing each other, partial clears.
 
+Since: the intro's movies play (Bink through ffmpeg, when pkg-config
+finds it), and the ship takes the throttle (the game reads keys by their
+scan codes); eight minutes of flight in the first mission with no fault.
+`tools/test/smoke.sh` runs the intro, menu and mission headless and
+checks each drew.
+
 Not done: fixed function (the game has drawn none so far), the CPU
 readback to the window (a CAMetalLayer would save it), depth bias's scale,
-sRGB, table fog, Doppler and sound cones, movies (Bink needs ffmpeg). Not
-checked: whether the ship takes orders (keys sent by script changed
-nothing in the first mission; it may want the mouse).
+sRGB, table fog, Doppler and sound cones, ffmpeg in the app. Not tried:
+combat, skirmish, the other missions, a real mouse and keyboard in the
+window.
 
 ### Phase 5 — sound, movies, input (2–3 weeks, parallel with 4)
 - **DirectSound 3D** in `dsound.c`: listener and buffer positions,
