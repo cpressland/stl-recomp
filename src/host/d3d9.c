@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <pthread.h>
 
 #include "win32hle.h"
 #include "stl.h"
@@ -427,9 +428,11 @@ static void shots(dev_t_ *d) {
 static void v_Present(void) {
     count();
     dev_t_ *d = DEV(A32(0));
+    if (!g_frames) fprintf(stderr, "[d3d9] the first Present is on the %s thread\n", pthread_main_np() ? "main" : "a second");
     ++g_frames;
     shots(d);
     gpu_present(d);
+    if (!stl_headless) stl_pump();                      /* the window's events: here, on the main thread */
     if (g_frames % 600 == 0) fprintf(stderr, "[d3d9] %llu frames\n", (unsigned long long)g_frames);
     RET(D3D_OK, 5);
 }

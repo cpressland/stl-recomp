@@ -937,9 +937,31 @@ int gpu_shot(dev_t_ *d, const char *path) {
     return 0;
 }
 
+/* With a window: the back buffer to win32hle's window surface, which its
+ * presenter (screen.c) scales into the window, F11 and F12 and the mouse's
+ * mapping included, as it does a GDI game's. One readback a frame, the CPU
+ * waiting for the GPU: a CAMetalLayer of our own would save it. */
+static void to_window(dev_t_ *d) {
+    static uint8_t *px;
+    static int pw, ph;
+    res_t *bb = OBJ(d->backbuffer, res_t);
+    if (!bb->gpu) return;
+    id<MTLTexture> t = (__bridge id<MTLTexture>)bb->gpu;
+    int w = (int)t.width, h = (int)t.height;
+    flush_wait();
+    if (w != pw || h != ph) {
+        free(px);
+        px = malloc((size_t)w * (size_t)h * 4);
+        pw = w, ph = h;
+        hle_gdi_window_surface(px, w, h, w * 4, 32);
+    }
+    [t getBytes:px bytesPerRow:(NSUInteger)w * 4 fromRegion:MTLRegionMake2D(0, 0, (NSUInteger)w, (NSUInteger)h) mipmapLevel:0];
+    hle_gdi_window_touched();
+}
+
 void gpu_present(dev_t_ *d) {
-    (void)d;
     if (!G) return;
+    if (!stl_headless) to_window(d);
     end_encoder();
     id<MTLCommandBuffer> c = command();
     dispatch_semaphore_t sem = G->inflight;

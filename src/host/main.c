@@ -28,7 +28,8 @@
 #define HKLM 0x80000002u
 
 int stl_verbose;
-static int g_headless;
+int stl_headless;
+#define g_headless stl_headless
 static int g_windowed;
 static unsigned g_watchdog_s;
 
@@ -37,6 +38,21 @@ void script_start(void);
 
 /* A function the lift left as a stub (run_lift.py writes none, today). */
 void recomp_not_lifted(uint32_t va) { hle_fatal("sub_%08X was not lifted", va); }
+
+/* STL_CHECK_WINDOW=1: say what the window shows, now and then (each frame
+ * screen.c draws into it comes here). */
+static void shown(const uint8_t *px, int w, int h, int pitch, int bpp) {
+    static unsigned n;
+    if (++n % 500 || !px || bpp != 32) return;
+    uint64_t sum = 0;
+    for (int y = h / 4; y < 3 * h / 4; y += 8)
+        for (int x = w / 4; x < 3 * w / 4; x += 8) { const uint8_t *p = px + (size_t)y * pitch + 4 * x; sum += p[0] + p[1] + p[2]; }
+    fprintf(stderr, "[window] frame %u shown, %dx%d, centre brightness %llu\n", n, w, h, (unsigned long long)sum);
+}
+
+void stl_pump(void) {
+    if (pthread_main_np()) hle_screen_pump();
+}
 
 /* What the installer leaves in the registry (Star Trek Legacy.msi's
  * Registry table: one value). */
@@ -165,6 +181,12 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
 
     if (chdir(game_full) != 0) { fprintf(stderr, "cannot enter %s\n", game_full); return 1; }
     if (hle_screen_open(STL_TITLE, !g_windowed, g_headless) != 0) return 1;
+    /* The game pumps its window's messages on a thread of its own, and
+     * AppKit takes events on the main thread only: SDL is pumped there (at
+     * each Present, d3d9.c, and when the main thread waits for messages
+     * itself), and a pump from another thread reads the queue as it is. */
+    if (!g_headless) hle_set_pump_hook(stl_pump);
+    if (!g_headless && getenv("STL_CHECK_WINDOW")) hle_screen_frame_hook = shown;
     if (g_watchdog_s) {
         pthread_t t;
         pthread_create(&t, NULL, watchdog, NULL);
