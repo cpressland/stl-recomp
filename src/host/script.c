@@ -58,7 +58,31 @@ int script_arg(int argc, char **argv, int i) {
 
 static void sleep_ms(unsigned ms) { usleep(ms * 1000u); }
 static void mouse(uint32_t m, int x, int y) { mach_enter(); hle_input_mouse(m, x, y); mach_leave(); }
-static void key(int down, uint32_t vk) { mach_enter(); hle_input_key(down, vk, 0); mach_leave(); }
+/* A key's set-1 scan code, as a keyboard's message carries it in lParam (a
+ * game may read the key from it): the keys a script presses. */
+static uint32_t scan_of(uint32_t vk) {
+    static const char row1[] = "1234567890", qrow[] = "QWERTYUIOP", arow[] = "ASDFGHJKL", zrow[] = "ZXCVBNM";
+    const char *p;
+    if (vk >= '1' && vk <= '9') return 0x02 + (vk - '1');
+    if (vk == '0') return 0x0B;
+    if ((p = strchr(qrow, (int)vk)) && vk) return 0x10 + (uint32_t)(p - qrow);
+    if ((p = strchr(arow, (int)vk)) && vk) return 0x1E + (uint32_t)(p - arow);
+    if ((p = strchr(zrow, (int)vk)) && vk) return 0x2C + (uint32_t)(p - zrow);
+    (void)row1;
+    switch (vk) {
+    case 0x1B: return 0x01;                     /* Escape */
+    case 0x08: return 0x0E;                     /* Backspace */
+    case 0x09: return 0x0F;                     /* Tab */
+    case 0x0D: return 0x1C;                     /* Return */
+    case 0x20: return 0x39;                     /* Space */
+    case 0xBD: return 0x0C;                     /* - */
+    case 0xBB: return 0x0D;                     /* = */
+    case 0x25: return 0x4B; case 0x26: return 0x48; case 0x27: return 0x4D; case 0x28: return 0x50;   /* arrows */
+    }
+    if (vk >= 0x70 && vk <= 0x79) return 0x3B + (vk - 0x70);   /* F1-F10 */
+    return 0;
+}
+static void key(int down, uint32_t vk) { mach_enter(); hle_input_key(down, vk, scan_of(vk)); mach_leave(); }
 
 static int by_time(const void *a, const void *b) {
     double d = ((const ev_t *)a)->t - ((const ev_t *)b)->t;
