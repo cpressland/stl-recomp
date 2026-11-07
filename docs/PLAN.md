@@ -290,6 +290,27 @@ In win32hle, as `d3d9.c` (objects, state, resources in guest memory) and
 Milestones: main menu → a skirmish map with ships → post-process and
 shadows → full speed at 1080p/4K on Apple silicon.
 
+**Under way (2026-11-07): the shader translator.** `src/host/dxso.c` turns
+D3D9 bytecode (vs/ps 1.1 to 3.0's common instructions, flow control, the
+ps_1_x modifiers and texture ops) into MSL with a fixed vertex-to-pixel
+interface, so any vertex shader pairs with any pixel shader as in D3D9.
+Two tools check it, neither needing the game running:
+
+- `work/dxso_check work/shaders`: every shader the game compiles
+  (`STL_DUMP_SHADERS`) through the translator and this Mac's Metal
+  compiler. **All 94 compile.**
+- `work/dxso_test`: hand-assembled shaders drawn on the GPU into a 1x1
+  float target and read back, against D3D9's answers: rcp/rsq/log at 0 and
+  of negatives, lit, vs_1_1 expp, mov a0 rounding down with a relative
+  constant, m4x4, sge/slt/frc, the oD0 clamp, ps_1_1 _bx2 with _x2, cnd,
+  _sat, cmp, lrp, dp2add, nrm, swizzles, texkill. **14 of 14.** (rcp(0) is
+  FLT_MAX under Metal's fast maths where the reference rasteriser has
+  +inf: kept, as it keeps a later 0 * rcp(0) a 0.)
+
+`tools/dxso/build.sh` builds both. The shaders themselves are the game's
+(compiled from its .fx files), so they are not in the repository: dump them
+with a run.
+
 ### Phase 5 — sound, movies, input (2–3 weeks, parallel with 4)
 - **DirectSound 3D** in `dsound.c`: listener and buffer positions,
   min/max distance, rolloff, doppler, mixed in software as today.
