@@ -13,6 +13,8 @@ Legacy.app will look):
     build/analysis/  each module's function catalog and the rest of the
                      lift's inputs (tools/gen/analyse.py)
     build/gen/       the lifted C of all four modules (run_lift.py)
+    build/host/      the compiled game: stl, the program, and libstl.dylib,
+                     the same game for the app to load (stl_main)
     install.json     what each part was made from
 
 No installer is run. The disc is an InstallShield 11 install: a Windows
@@ -32,7 +34,8 @@ only when they change (DATA_VERSION) or the game folder is gone, and then
 need the disc image and the patch again. --status says what a run would
 redo, as JSON: after a lifter fix only the lift, after an analysis fix the
 analysis and the lift. The compile and the app join these steps in later
-phases (docs/PLAN.md).
+phases (docs/PLAN.md); the compile is ninja's, so after a host fix only
+what changed is rebuilt.
 
 Progress goes to stdout as plain lines; `@step i n title`, `@progress
 fraction` and `@error text` lines are for a front end to show.
@@ -77,8 +80,10 @@ KEEP = ()
 SPACE_NEEDED = 6 << 30       # the game folder (3.3 GB) and the downloads (2.2 GB)
 
 # What the build needs of each tree: what the app will carry, and what is staged.
-SOURCES = {'stl': ('CMakeLists.txt', 'run_lift.py', 'tools'),
+SOURCES = {'stl': ('CMakeLists.txt', 'run_lift.py', 'src', 'tools'),
            'pcrecomp': ('runtime', 'tools', 'LICENSE')}
+
+SDL_FRAMEWORKS = ('SDL2.framework', 'SDL2_ttf.framework')
 
 # --download: the two files, from where this project keeps copies of them
 # (STL_DOWNLOAD_BASE: elsewhere). Checked against the same MD5s as ever.
@@ -202,7 +207,9 @@ class Install:
         self.pc_src = os.path.join(self.src, 'pcrecomp')
         self.analysis = os.path.join(self.build, 'analysis')
         self.gen = os.path.join(self.build, 'gen')
+        self.host = os.path.join(self.build, 'host')
         self.env = dict(os.environ, PCRECOMP=self.pc_src)
+        self.sdl = os.path.join(self.src, 'Frameworks') if a.sdl_frameworks else None
         self.tmp = os.path.join(self.dest, 'tmp')
         self.state_path = os.path.join(self.dest, 'install.json')
         try:
@@ -235,7 +242,11 @@ class Install:
                              *(os.path.join(gen, n) for n in ('analyse.py', 'data_code_ptrs.py', 'modules.py',
                                                               'rebase.py')))
         lift = tree_hash(os.path.join(tools, 'lift'), os.path.join(REPO, 'run_lift.py'))
-        return {'data': data, 'analysis': f'{data}/{analysis}', 'lift': f'{data}/{analysis}/{lift}'}
+        host = tree_hash(os.path.join(REPO, 'CMakeLists.txt'), os.path.join(REPO, 'src'),
+                         os.path.join(self.pcrecomp, 'runtime'),
+                         *(os.path.join(self.a.sdl_frameworks, f) for f in SDL_FRAMEWORKS if self.a.sdl_frameworks))
+        return {'data': data, 'analysis': f'{data}/{analysis}', 'lift': f'{data}/{analysis}/{lift}',
+                'host': f'{data}/{analysis}/{lift}/{host}'}
 
     def stale(self, keys):
         """The parts out of date, in order: one stale part makes all after it so."""
@@ -243,15 +254,40 @@ class Install:
             self.state.pop('data', None)
         if not os.path.exists(os.path.join(self.gen, 'recomp_dispatch.c')):
             self.state.pop('lift', None)
+        if not os.path.exists(os.path.join(self.host, 'stl')):
+            self.state.pop('host', None)
         out = []
-        for k in ('data', 'analysis', 'lift'):
+        for k in ('data', 'analysis', 'lift', 'host'):
             if out or self.state.get(k) != keys[k]:
                 out.append(k)
         return out
 
     # ---- the steps -------------------------------------------------------
 
+    def find_tools(self):
+        """CMake and Ninja: this Python's own packages first (an app's), then the PATH."""
+        try:
+            import cmake
+            cm = os.path.join(cmake.CMAKE_BIN_DIR, 'cmake')
+        except ImportError:
+            cm = shutil.which('cmake')
+        nj = os.path.join(os.path.dirname(sys.executable), 'ninja')
+        if not os.access(nj, os.X_OK):
+            nj = shutil.which('ninja')
+        return cm, nj
+
     def check(self):
+        self.cmake, self.ninja = self.find_tools()
+        if not self.cmake or not self.ninja:
+            raise Failed('no cmake or ninja (README: prerequisites)')
+        if subprocess.run(['xcrun', '--find', 'clang'], capture_output=True).returncode:
+            raise Failed("no C compiler: install Xcode's command line tools (xcode-select --install)")
+        if self.a.sdl_frameworks:
+            for f in SDL_FRAMEWORKS:
+                if not os.path.isdir(os.path.join(self.a.sdl_frameworks, f)):
+                    raise Failed(f'no {f} in {self.a.sdl_frameworks}')
+        elif subprocess.run(['pkg-config', '--exists', 'sdl2', 'SDL2_ttf']).returncode:
+            raise Failed('pkg-config cannot find sdl2 and SDL2_ttf (README: prerequisites)')
         missing = [m for m in ('olefile', 'pefile', 'capstone')
                    if subprocess.run([sys.executable, '-I', '-c', f'import {m}'], capture_output=True).returncode]
         if missing:
@@ -384,6 +420,13 @@ class Install:
     def stage(self):
         """The sources, copied to where the build always finds them."""
         n = sync(REPO, SOURCES['stl'], self.stl_src) + sync(self.pcrecomp, SOURCES['pcrecomp'], self.pc_src)
+        # The app's frameworks are copied whole, links and all, when they differ at all.
+        for f in SDL_FRAMEWORKS if self.sdl else ():
+            src, dst = os.path.join(self.a.sdl_frameworks, f), os.path.join(self.sdl, f)
+            if not os.path.isdir(dst) or tree_hash(src) != tree_hash(dst):
+                shutil.rmtree(dst, ignore_errors=True)
+                shutil.copytree(src, dst, symlinks=True)
+                n += 1
         say(f'{n} source files changed')
 
     def analyse(self):
@@ -394,8 +437,22 @@ class Install:
                  self.game, self.analysis)
 
     def lift(self):
-        shutil.rmtree(self.gen, ignore_errors=True)
+        # run_lift.py replaces only the files whose bytes changed, so the
+        # compile after it redoes only those: the folder is kept.
         self.run(sys.executable, os.path.join(self.stl_src, 'run_lift.py'), '--work', self.analysis, '--out', self.gen)
+
+    def compile(self):
+        config = [self.stl_src, self.pc_src, self.sdl or 'pkg-config', self.cmake]
+        if self.state.get('host_config') != config:
+            shutil.rmtree(self.host, ignore_errors=True)
+        if not os.path.exists(os.path.join(self.host, 'build.ninja')):
+            self.run(self.cmake, '-S', self.stl_src, '-B', self.host, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=RelWithDebInfo',
+                     f'-DCMAKE_MAKE_PROGRAM={self.ninja}', f'-DPCRECOMP={self.pc_src}', f'-DGEN_DIR={self.gen}',
+                     f'-DSTL_SDL_FRAMEWORKS={self.sdl or ""}')
+            self.state['host_config'] = config
+            self.save_state()
+        say('compiling (half an hour the first time; after a fix, what changed)...')
+        self.run(self.cmake, '--build', self.host)
 
     # ---- the order -------------------------------------------------------
 
@@ -414,7 +471,8 @@ class Install:
                  *([('Downloading the game', self.download, None)] if fetch else []),
                  ('Installing and patching the game', self.disc, 'data'),
                  ('Analysing the game', self.analyse, 'analysis'),
-                 ('Translating the game to C', self.lift, 'lift')]
+                 ('Translating the game to C', self.lift, 'lift'),
+                 ('Compiling', self.compile, 'host')]
         todo = [s for s in steps if s[2] is None or s[2] in stale]
         for i, (title, fn, key) in enumerate(todo, 1):
             say(f'@step {i} {len(todo)} {title}')
@@ -429,7 +487,15 @@ class Install:
                 self.save_state()
             say(f'    {title.lower()}: {time.time() - t:.0f} s')
         say('@done')
-        say(f'done. The game is in "{self.game}", its C in "{self.gen}".')
+        say('done. Play from a terminal:')
+        say(f'  "{os.path.join(self.host, "stl")}" --game "{self.game}" --run --windowed')
+
+
+def export(out, pcrecomp):
+    """The sources the app carries: SOURCES of this repository and pcrecomp."""
+    n = sync(REPO, SOURCES['stl'], os.path.join(out, 'stl')) + \
+        sync(find_pcrecomp(pcrecomp), SOURCES['pcrecomp'], os.path.join(out, 'pcrecomp'))
+    say(f'{n} files to {out}')
 
 
 def main():
@@ -443,11 +509,18 @@ def main():
                     help='with no --iso and --patch, download both (STL_DOWNLOAD_BASE)')
     ap.add_argument('--dest', default=DEFAULT_DEST, help='where it goes (default: %(default)s)')
     ap.add_argument('--pcrecomp', help='the pcrecomp checkout (default: ./pcrecomp, then ../pcrecomp)')
+    ap.add_argument('--sdl-frameworks', help='a folder with SDL2.framework and SDL2_ttf.framework '
+                    '(default: SDL from pkg-config)')
+    ap.add_argument('--export-sources', metavar='DIR', help='copy the sources the build needs to DIR, and stop')
     ap.add_argument('--force', action='store_true', help='redo every step')
     ap.add_argument('--status', action='store_true', help='print what a run would redo, as JSON')
     a = ap.parse_args()
+    if a.sdl_frameworks:
+        a.sdl_frameworks = os.path.abspath(a.sdl_frameworks)
     try:
-        if a.status:
+        if a.export_sources:
+            export(a.export_sources, a.pcrecomp)
+        elif a.status:
             Install(a).status()
         else:
             Install(a).go()

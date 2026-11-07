@@ -1,0 +1,7 @@
+# The bundled Python's packages (app/toolchain.sh): the disc's, the lift's and the build's.
+olefile==0.47
+pefile==2024.8.26
+capstone==5.0.9
+unicorn==2.1.4
+cmake==4.4.4
+ninja==1.13.2

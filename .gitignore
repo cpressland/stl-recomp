@@ -12,3 +12,4 @@ __pycache__/
 .DS_Store
 # Generated from the game: never checked in
 /src/recomp/gen/
+/build-app/
