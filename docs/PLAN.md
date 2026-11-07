@@ -311,6 +311,31 @@ Two tools check it, neither needing the game running:
 (compiled from its .fx files), so they are not in the repository: dump them
 with a run.
 
+**The device on Metal (2026-11-07).** `src/host/d3d9_metal.m` is the GPU
+side of `d3d9.c` (whose state it reads at each draw). Headless, with
+screenshots (`STL_SHOT`) to look at: the main menu draws whole, and two
+scripted clicks (`--click`) later the first campaign mission does, the
+NX-01 textured, lit and bump-mapped, planets, the sun's corona and flares,
+the nebula, HUD and radar, through the game's own bloom and glow passes.
+With a window the picture goes to win32hle's presenter (`screen.c`) by a
+readback a frame. What it took beyond the plan:
+
+- D3D9's default render, stage and sampler states (all-zero masked every
+  colour write off);
+- a shader's length found by walking its tokens (the end token's value in
+  D3DX's constant table cut 36 vertex shaders to nothing, and with them
+  every model);
+- the game pumps its window's messages on a thread of its own, and AppKit
+  takes events on the main thread only: SDL is pumped there;
+- state blocks that record (D3DX's effects save and restore through them),
+  SetFVF and SetVertexDeclaration replacing each other, partial clears.
+
+Not done: fixed function (the game has drawn none so far), the CPU
+readback to the window (a CAMetalLayer would save it), depth bias's scale,
+sRGB, table fog, Doppler and sound cones, movies (Bink needs ffmpeg). Not
+checked: whether the ship takes orders (keys sent by script changed
+nothing in the first mission; it may want the mouse).
+
 ### Phase 5 — sound, movies, input (2–3 weeks, parallel with 4)
 - **DirectSound 3D** in `dsound.c`: listener and buffer positions,
   min/max distance, rolloff, doppler, mixed in software as today.
@@ -322,6 +347,12 @@ with a run.
 - Ogg music is the game's own (lifted) Vorbis; nothing to do.
 
 ### Phase 6 — the app (1–2 weeks; most of it is TPW's)
+
+**Started (2026-11-07).** `app/` is TPW's launcher made this game's, and
+`install.py` compiles: `app/build-app.sh` makes the app (122 MB), its
+setup window draws (`STL_SNAPSHOT`). A release workflow and Sparkle feed
+are still to do.
+
 - `app/Launcher` from TPW: `Star Trek Legacy.app`, **Download and Build** /
   **Use Files I Already Have**, progress from `install.py`'s `@step`/
   `@progress`, then **Play** loading `libstl.dylib` at `stl_main` in a child
