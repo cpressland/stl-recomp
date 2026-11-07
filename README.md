@@ -7,11 +7,14 @@ A static recompilation of Mad Doc Software's **Star Trek: Legacy** (Bethesda,
 `runtime/win32hle`, the same way as
 [tpw-recomp](https://github.com/cpressland/tpw-recomp).
 
-**Status: Phase 3 of [the plan](docs/PLAN.md).** The game's folder is built
-from the disc image and the 1.2 patch with no Windows and no installer; the
-game and the three Microsoft DLLs it brings are lifted to C; and the native
-host runs it, into its main loop, on a Direct3D 9 device that draws nothing
-yet. The Metal renderer is next ([what it has to do](docs/d3d9-calls.md)).
+**Status: Phase 4 of [the plan](docs/PLAN.md), early but drawing.** The
+game's folder is built from the disc image and the 1.2 patch with no
+Windows and no installer; the game and the three Microsoft DLLs it brings
+are lifted to C; and the native host runs it on Direct3D 9 implemented on
+Metal, with the game's shaders translated to Metal's: the main menu, and
+the first campaign mission's ship, planets, nebula and HUD, draw. Not yet:
+movies (skipped), fixed-function drawing, Doppler and sound cones, and a
+lot of play-testing.
 
 ## What you need
 
@@ -92,13 +95,36 @@ Guest C++ exceptions are caught by the guest's own catch blocks: msvcr71's
 every function with a catch gets a landing pad (`tools/lift/eh32.py`),
 including the ones msvcp71 opens through `__EH_prolog`.
 
-## Running it (headless, for now)
+## Playing it
+
+`tools/install/install.py` (below) ends with the compiled game in
+`DIR/build/host`; then:
 
 ```
-cmake -S . -B build-macos -G Ninja && cmake --build build-macos
-build-macos/stl --game DIR/game                                 # map and bind: says what is missing
-build-macos/stl --game DIR/game --run --headless --mute --watchdog 60
+DIR/build/host/stl --game DIR/game --run --windowed      # or full screen without --windowed
 ```
+
+F11 toggles full screen, F12 the scaling, Ctrl+Cmd lets go of the mouse.
+
+**Star Trek Legacy.app** does all of it: `app/build-app.sh` makes
+`build-app/Star Trek Legacy.app`, which downloads the two files (or takes
+your own), builds the game into `~/Library/Application Support/Star Trek
+Legacy` (about an hour the first time) and opens on Play. It needs only
+Xcode's command line tools. It is tpw-recomp's launcher; see that README
+for its options (`STL_HOME`, `STL_ISO`, `STL_PATCH`, `STL_SNAPSHOT`, ...).
+
+For testing, headless, with scripted input and screenshots:
+
+```
+stl --game DIR/game                                          # map and bind: says what is missing
+STL_SHOT=shots STL_SHOT_EVERY=5000 stl --game DIR/game --run --headless --mute --watchdog 200 \
+    --click 512,408@75 --click 512,393@95                    # the menu, then the first mission
+```
+
+`STL_SHOT=DIR` writes the back buffer every `STL_SHOT_EVERY` frames;
+`STL_TRACE_FRAME=N` lists every draw, clear and StretchRect of frame N;
+`STL_TRACE_LAYOUT=1` how each pipeline matched shader inputs to the vertex
+declaration; `STL_CHECK_WINDOW=1` what the window shows.
 
 `--verbose` lists every import still a stub and every Direct3D 9 call as
 it is made; at exit the run prints how often each Direct3D 9 method was
@@ -110,7 +136,10 @@ What the host is (`src/host`): `loader.c` maps the four modules at their
 bases and binds them to each other (D3DX's `msvcrt.dll` imports to
 msvcr71) and to win32hle; `wide.c` the Unicode calls; `shims.c` the rest
 win32hle lacks; `setjmp.c` D3DX's `setjmp`/`longjmp` on eh32's landing
-pads; `d3d9.c` Direct3D 9; `cpu.c` the CPU it reports (a Pentium III).
+pads; `d3d9.c` Direct3D 9's interfaces and state, `d3d9_metal.m` the same
+on Metal, `dxso.c` the shaders (D3D9 bytecode to Metal Shading Language,
+checked by `tools/dxso`); `cpu.c` the CPU it reports (a Pentium III);
+`script.c` scripted input.
 
 ## pcrecomp: pending merges
 
