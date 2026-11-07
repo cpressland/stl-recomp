@@ -17,6 +17,13 @@ too. Without that, msvcr71's `_initterm` called 55 of D3DX's static
 constructors that were never lifted. A target that opens with int3 (a
 dword of padding read as an address) is not taken.
 
+The catalog can be wrong the other way too: D3DX's shader-target vtables
+sit in a stretch of `.text` the disassembler decoded as one function. So a
+run anywhere, inside a catalogued function or not, is taken when every one
+of its targets looks like a function start: already known, or just after
+int3, nop or ret padding. (A table of numbers that happen to fall in the
+code section points mid-instruction, and is not.)
+
 And a function Microsoft built for hot-patching (/hotpatch: D3DX, most of
 Windows) announces itself: five bytes of int3 or nop padding, then
 `mov edi, edi`. Every such start in a code section is an entry, wherever
@@ -92,6 +99,23 @@ def main(exe, catalog, out):
         if len(run) >= RUN:
             for t, at in run:
                 take(t, at)
+    def start_like(v):
+        return v in known or v in seeds or img[v - base - 1] in (0xCC, 0x90, 0xC3)
+
+    for s in pe.sections:
+        start = s.VirtualAddress
+        n = min(s.Misc_VirtualSize, len(img) - start)
+        run = []
+        for off in range(0, n - 3, 4):
+            v = struct.unpack_from('<I', img, start + off)[0]
+            if is_code(v):
+                run.append((v, base + start + off))
+                continue
+            if len(run) >= RUN and all(start_like(t) for t, _ in run):
+                for t, at in run:
+                    if t not in known:
+                        seeds.setdefault(t, at)
+            run = []
     for s in pe.sections:
         if not s.Characteristics & 0x20000000:
             continue

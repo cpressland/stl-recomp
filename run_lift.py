@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import sys
 import time
 
@@ -48,8 +49,13 @@ TITLE = 'Star Trek: Legacy'
 
 # Exports whose body is the host's: module -> {export name: C function}.
 HOOK_EXPORTS = {
-    'msvcr71': {'_CxxThrowException': 'hle_eh_throw'},
+    'msvcr71': {'_CxxThrowException': 'hle_eh_throw',
+                '_setjmp3': 'stl_setjmp3', '_setjmp': 'stl_setjmp3', 'longjmp': 'stl_longjmp'},
 }
+
+# setjmp, as a module imports it: each call gets a landing pad after it, and
+# g_stl_setjmp_resume set to that address just before (src/host/setjmp.c).
+SETJMP_IMPORTS = (b'_setjmp3', b'_setjmp', b'setjmp')
 
 # Functions per .c file: D3DX's are long (its HLSL compiler), and at 400 a
 # few of its files kept one core busy for minutes after the rest were done.
@@ -100,6 +106,17 @@ class Module:
                 if e.name and e.address:
                     self.exports[e.name.decode()] = base + e.address
         self.entry = base + pe.OPTIONAL_HEADER.AddressOfEntryPoint
+        # setjmp's import slots, and the thunks that jump through them
+        # (`jmp dword ptr [slot]`, found by their bytes: D3DX's .text is
+        # data and code mixed, where a sweep loses step).
+        self.setjmp_slots = {imp.address for e in getattr(pe, 'DIRECTORY_ENTRY_IMPORT', [])
+                             for imp in e.imports if imp.name in SETJMP_IMPORTS}
+        self.setjmp_thunks = set()
+        for slot in self.setjmp_slots:
+            pat, at = b'\xff\x25' + struct.pack('<I', slot), 0
+            while (at := self.image.find(pat, at)) >= 0:
+                self.setjmp_thunks.add(base + at)
+                at += 1
         info = analyze_pe(self.path)
         self.iat = build_iat_map(info)
         self.cs, self.ce = info.code_start, info.code_end
@@ -124,6 +141,23 @@ class Module:
         for a in want:
             byaddr[a] = {'address': a, 'end': min(nxt[a], a + 0x100), 'calls_to': [], 'entry_kind': 'start'}
         return byaddr, len(want)
+
+
+def setjmp_call(m, i):
+    """A call to setjmp: through one of its thunks, or its import slot."""
+    t = i.get_branch_target()
+    if t is not None:
+        return t in m.setjmp_thunks
+    return i.op_str.startswith('dword ptr [0x') and int(i.op_str[11:-1], 16) in m.setjmp_slots
+
+
+def before(body, va, c):
+    """Put c on a line of its own before the line that lifts va."""
+    k = body.find('/* 0x%08X:' % va)
+    if k < 0:
+        raise ValueError('no line for 0x%08X to put %r before' % (va, c))
+    start = body.rfind('\n', 0, k) + 1
+    return body[:start] + '    ' + c + '\n' + body[start:]
 
 
 def catches(m, head):
@@ -158,21 +192,29 @@ def lift_module(m, out, idx, entries, log):
     starts = {a for a in byaddr if byaddr[a].get('entry_kind') != 'alias'}
     splits = find_splits(md, m.code, m.cs, m.ce, starts)
     starts -= splits
-    first = idx
-    st = {'lifted': 0, 'errors': 0, 'no_terminator': 0, 'eh_frames': 0, 'eh_pads': 0, 'eh_catch_no_pad': 0,
+    st = {'setjmp_sites': 0, 'lifted': 0, 'errors': 0, 'no_terminator': 0, 'eh_frames': 0, 'eh_pads': 0, 'eh_catch_no_pad': 0,
           'added': 0, 'cpuid': 0, 'hooks': 0}
     chunk = []
 
     def flush(force=False):
+        """At the end, every function in its file: files are named by the
+        module and the 64 KB of its address space they hold, so a function
+        found later changes only its own window's files, and a change in
+        one module leaves every other's alone (a build recompiles only those)."""
         nonlocal chunk, idx
-        if chunk and (force or len(chunk) >= CHUNK.get(m.name, 400)):
-            # Numbered within the module, so a change in one module leaves
-            # every other module's files as they were.
-            write_chunk(out, idx, chunk)
-            os.replace(os.path.join(out, 'recomp_%04d.c' % idx),
-                       os.path.join(out, 'recomp_%s_%04d.c' % (m.name, idx - first)))
-            idx += 1
-            chunk = []
+        if not force:
+            return
+        per = CHUNK.get(m.name, 400)
+        windows = {}
+        for item in sorted(chunk, key=lambda c: c[1]):
+            windows.setdefault(item[1] >> 16, []).append(item)
+        for w, items in sorted(windows.items()):
+            for k in range(0, len(items), per):
+                write_chunk(out, idx, items[k:k + per])
+                os.replace(os.path.join(out, 'recomp_%04d.c' % idx),
+                           os.path.join(out, 'recomp_%s_%04X_%d.c' % (m.name, w, k // per)))
+                idx += 1
+        chunk = []
 
     def lift_one(addr, end, reached):
         name = 'sub_%08X' % addr
@@ -188,6 +230,10 @@ def lift_module(m, out, idx, entries, log):
                     leaders.add(addr)
                 head = [i for i in insns if i.address >= addr]
                 eh = eh32.resume_points(md, m.read, head)
+                sj = [i for i in insns if i.mnemonic == 'call' and setjmp_call(m, i)]
+                if sj:
+                    eh = set(eh or ()) | {i.address + i.size for i in sj}
+                    st['setjmp_sites'] += len(sj)
                 if eh is not None:
                     st['eh_frames'] += 1
                     st['eh_pads'] += bool(eh)
@@ -199,6 +245,8 @@ def lift_module(m, out, idx, entries, log):
                 body = (lift_function_linear(lifter, name, insns, leaders, addr, eh_resume=eh) if insns
                         else 'void %s(void) { }\n' % name)
                 body = apply_patches(body, {va: c for va, c in patches.items() if reached and va in reached})
+                for i in sj:
+                    body = before(body, i.address, 'g_stl_setjmp_resume = 0x%08Xu;' % (i.address + i.size))
                 if CPUID_LIFTED in body:
                     st['cpuid'] += body.count(CPUID_LIFTED)
                     body = body.replace(CPUID_LIFTED, CPUID_HOST)
@@ -290,7 +338,8 @@ def main():
         f.write('/* Star Trek: Legacy - AUTO-GENERATED by run_lift.py */\n#pragma once\n'
                 '#include <stdint.h>\n\n'
                 'void recomp_not_lifted(uint32_t va);\n'
-                '#define RECOMP_NOT_LIFTED(va) recomp_not_lifted(va)\n\n')
+                '#define RECOMP_NOT_LIFTED(va) recomp_not_lifted(va)\n'
+                'extern uint32_t g_stl_setjmp_resume;   /* src/host/setjmp.c */\n\n')
         for a, n in entries:
             f.write('void %s(void);\n' % n)
     with open(os.path.join(args.out, 'recomp_dispatch.c'), 'w', newline='\n') as f:

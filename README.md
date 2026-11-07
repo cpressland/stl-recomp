@@ -7,10 +7,11 @@ A static recompilation of Mad Doc Software's **Star Trek: Legacy** (Bethesda,
 `runtime/win32hle`, the same way as
 [tpw-recomp](https://github.com/cpressland/tpw-recomp).
 
-**Status: Phase 2 of [the plan](docs/PLAN.md).** The game's folder is built
-from the disc image and the 1.2 patch with no Windows and no installer, and
-the game and the three Microsoft DLLs it brings are catalogued and lifted to
-C. The host, and the Direct3D 9 renderer, come next.
+**Status: Phase 3 of [the plan](docs/PLAN.md).** The game's folder is built
+from the disc image and the 1.2 patch with no Windows and no installer; the
+game and the three Microsoft DLLs it brings are lifted to C; and the native
+host runs it, into its main loop, on a Direct3D 9 device that draws nothing
+yet. The Metal renderer is next ([what it has to do](docs/d3d9-calls.md)).
 
 ## What you need
 
@@ -91,6 +92,26 @@ Guest C++ exceptions are caught by the guest's own catch blocks: msvcr71's
 every function with a catch gets a landing pad (`tools/lift/eh32.py`),
 including the ones msvcp71 opens through `__EH_prolog`.
 
+## Running it (headless, for now)
+
+```
+cmake -S . -B build-macos -G Ninja && cmake --build build-macos
+build-macos/stl --game DIR/game                                 # map and bind: says what is missing
+build-macos/stl --game DIR/game --run --headless --mute --watchdog 60
+```
+
+`--verbose` lists every import still a stub and every Direct3D 9 call as
+it is made; at exit the run prints how often each Direct3D 9 method was
+called. `STL_DUMP_SHADERS=DIR` writes each shader D3DX compiles,
+`HLE_TRACE_EH=1` each C++ throw and where it lands. The game's saves and
+settings go to a drive `U:`, `DIR/User`, beside the game folder.
+
+What the host is (`src/host`): `loader.c` maps the four modules at their
+bases and binds them to each other (D3DX's `msvcrt.dll` imports to
+msvcr71) and to win32hle; `wide.c` the Unicode calls; `shims.c` the rest
+win32hle lacks; `setjmp.c` D3DX's `setjmp`/`longjmp` on eh32's landing
+pads; `d3d9.c` Direct3D 9; `cpu.c` the CPU it reports (a Pentium III).
+
 ## pcrecomp: pending merges
 
 As tpw-recomp, this builds against pcrecomp's `main` plus branches still in
@@ -100,6 +121,9 @@ review, merged into a local `stl-local`:
 |---|---|---|
 | `win32hle-eh32` | guest C++ exceptions on win32hle | **Yes**: the engine and its runtime throw |
 | `lift-eh32-eh-prolog` | landing pads for frames opened through `__EH_prolog` | **Yes**: msvcp71's catches |
+| `win32hle-dinput8` | DirectInput 8, on `win32hle-dinput` | **Yes**: the game's mouse |
+| `win32hle-dx9-system-dlls` | `d3d9`, `dinput8` and XInput load as system DLLs | **Yes**: the game loads `d3d9.dll` at run time |
+| `win32hle-dsound3d` | DirectSound 3D, on `win32hle-dsound-cursor` | **Yes**: the game places every sound |
 | tpw-recomp's (`win32hle-dinput`, `-gdi-lfwidth`, `-mouse-confine`, `-dsound-cursor`, `-metal`) | DirectInput, Metal and the rest | for the host, Phase 3 on |
 
 All of them are on [cpressland/pcrecomp](https://github.com/cpressland/pcrecomp):
@@ -115,6 +139,7 @@ git add runtime/win32hle/README.md runtime/win32hle/screen.c && git commit --no-
 git merge --no-edit cpressland/win32hle-eh32     # README: keep both rows
 git add runtime/win32hle/README.md && git commit --no-edit
 git merge --no-edit cpressland/lift-eh32-eh-prolog
+git merge --no-edit cpressland/win32hle-dinput8 cpressland/win32hle-dx9-system-dlls cpressland/win32hle-dsound3d
 ```
 
 When a branch is merged upstream, drop it from this list (and the table).

@@ -10,11 +10,13 @@ the remaster conventions (presenter, F-key settings, resolutions).
 
 Everything below is from a first survey of the two files (2026-11-06).
 
-**Progress:** Phases 0–2 are done. `tools/install/install.py` builds the
+**Progress:** Phases 0–3 are done. `tools/install/install.py` builds the
 1.2 game folder from the two files in under half a minute, identical to the
 survey's tree, then catalogues and lifts all four modules to C with no
-errors; guest C++ exceptions work on win32hle (README; results under
-Phase 2 below).
+errors; the host maps and runs them, and the game runs its main loop on a
+Direct3D 9 device that draws nothing, for as long as it is left (three
+minutes, 123,035 frames, no fault). What it asks of Direct3D 9 is in
+`docs/d3d9-calls.md`: Phase 4's list.
 
 ## 1. What we have
 
@@ -223,6 +225,43 @@ app's first build will want D3DX's chunks smaller or at `-O1`. Found on the way:
   fires), `GetVersionExW`, `SHGetFolderPathA`, `CoCreateGuid`.
 - A **d3d9 stub** that creates a device and presents nothing: the game
   reaches its main loop, logs `config.cfg` reads, loads `db.pak`.
+
+**Done (2026-11-07).** `src/host` is the program: four modules mapped
+and bound to each other, the DLLs attached, the game entered. What the
+runs have turned up so far:
+
+- d3dx9_27 imports **msvcrt.dll**, Windows' own runtime, not msvcr71: its 64
+  imports are bound to the lifted msvcr71's exports (`loader.c`).
+- The game loads `C:\WINDOWS\SYSTEM32\d3d9.dll` by full path, and win32hle
+  had no d3d9, dinput8 or XInput among its system DLLs: pcrecomp
+  `win32hle-dx9-system-dlls`. DirectInput 8 itself: `win32hle-dinput8`.
+- Its window code is Unicode: `wide.c` answers the W calls on the A ones.
+- **Code the catalog missed**, found by running: D3DX keeps its read-only
+  data in `.text`, so msvcr71's `_initterm` called 55 unlifted static
+  constructors; and the disassembler decoded D3DX's shader-target vtables
+  as a function. `data_code_ptrs.py` now reads code sections as data where
+  no function is, takes pointer runs anywhere whose targets look like
+  function starts, and every hot-patch start (`mov edi, edi` after
+  padding): 384 D3DX entries in all.
+- Each such fix recompiles D3DX: 33 minutes at first, 17 with its chunks
+  split finer, and now only the 64 KB windows that changed (chunks are
+  named by address window).
+- The game creates its device (1024x768, A8R8G8B8, full screen), D3DX
+  compiles the game's effects (81 vertex and 81 pixel shaders, dumped with
+  STL_DUMP_SHADERS for Phase 4), and the game sets up DirectSound 3D
+  (pcrecomp `win32hle-dsound3d`: listener and 3D buffers, distance rolloff
+  and pan in the mixer).
+- **The main loop runs**: 3,249 frames presented, tens of thousands of draws,
+  before D3DX's compiler `longjmp`ed out of an error and landed nowhere.
+  `setjmp`/`longjmp` are now msvcr71 hooks on eh32's landing pads
+  (`src/host/setjmp.c`; run_lift.py gives each of D3DX's 7 setjmp calls a
+  pad and tells setjmp where it is, as a lifted call pushes no real return
+  address).
+- A Phase 2 bug, found on the way: pefile's `relocate_image` corrupted
+  d3dx9_27's import table in the rebased copy, so every tool saw a DLL with
+  no imports (and 166 false code pointers). `rebase.py` now applies the
+  relocations itself; only the import table differed, so the lifted code
+  was right.
 
 ### Phase 4 — Direct3D 9 on Metal (the bulk: 6–10 weeks)
 In win32hle, as `d3d9.c` (objects, state, resources in guest memory) and
