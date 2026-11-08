@@ -40,7 +40,27 @@ void script_start(void);
 void recomp_not_lifted(uint32_t va) { hle_fatal("sub_%08X was not lifted", va); }
 
 /* STL_CHECK_WINDOW=1: say what the window shows, now and then (each frame
- * screen.c draws into it comes here). */
+ * screen.c draws into it comes here); STL_WINDOW_SHOT=DIR keeps those
+ * frames too, as DIR/window_NNNNNN.bmp: what the window had, not the back
+ * buffer (STL_SHOT). */
+static void window_bmp(const char *dir, unsigned n, const uint8_t *px, int w, int h, int pitch) {
+    char path[4096];
+    snprintf(path, sizeof path, "%s/window_%06u.bmp", dir, n);
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    uint32_t row = (uint32_t)w * 3 + (4 - ((uint32_t)w * 3) % 4) % 4, size = 54 + row * (uint32_t)h;
+    uint8_t hdr[54] = { 'B', 'M' };
+    memcpy(hdr + 2, &size, 4), hdr[10] = 54, hdr[14] = 40;
+    memcpy(hdr + 18, &w, 4), memcpy(hdr + 22, &h, 4), hdr[26] = 1, hdr[28] = 24;
+    fwrite(hdr, 1, 54, f);
+    uint8_t *line = calloc(1, row);
+    for (int y = h - 1; y >= 0; y--) {
+        for (int x = 0; x < w; x++) memcpy(line + 3 * x, px + (size_t)y * (size_t)pitch + 4 * (size_t)x, 3);
+        fwrite(line, 1, row, f);
+    }
+    free(line);
+    fclose(f);
+}
 static void shown(const uint8_t *px, int w, int h, int pitch, int bpp) {
     static unsigned n;
     if (++n % 500 || !px || bpp != 32) return;
@@ -48,6 +68,8 @@ static void shown(const uint8_t *px, int w, int h, int pitch, int bpp) {
     for (int y = h / 4; y < 3 * h / 4; y += 8)
         for (int x = w / 4; x < 3 * w / 4; x += 8) { const uint8_t *p = px + (size_t)y * pitch + 4 * x; sum += p[0] + p[1] + p[2]; }
     fprintf(stderr, "[window] frame %u shown, %dx%d, centre brightness %llu\n", n, w, h, (unsigned long long)sum);
+    const char *dir = getenv("STL_WINDOW_SHOT");
+    if (dir) window_bmp(dir, n, px, w, h, pitch);
 }
 
 void stl_pump(void) {
@@ -190,7 +212,7 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
      * each Present, d3d9.c, and when the main thread waits for messages
      * itself), and a pump from another thread reads the queue as it is. */
     if (!g_headless) hle_set_pump_hook(stl_pump);
-    if (!g_headless && getenv("STL_CHECK_WINDOW")) hle_screen_frame_hook = shown;
+    if (!g_headless && (getenv("STL_CHECK_WINDOW") || getenv("STL_WINDOW_SHOT"))) hle_screen_frame_hook = shown;
     if (g_watchdog_s) {
         pthread_t t;
         pthread_create(&t, NULL, watchdog, NULL);

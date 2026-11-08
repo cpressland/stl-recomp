@@ -139,7 +139,8 @@ nothing faults (about four minutes).
 `STL_SHOT=DIR` writes the back buffer every `STL_SHOT_EVERY` frames;
 `STL_TRACE_FRAME=N` lists every draw, clear and StretchRect of frame N;
 `STL_TRACE_LAYOUT=1` how each pipeline matched shader inputs to the vertex
-declaration; `STL_CHECK_WINDOW=1` what the window shows.
+declaration; `STL_CHECK_WINDOW=1` what the window shows, and `STL_WINDOW_SHOT=DIR` keeps
+every 500th frame it shows as a BMP.
 
 `--verbose` lists every import still a stub and every Direct3D 9 call as
 it is made; at exit the run prints how often each Direct3D 9 method was

@@ -27,6 +27,8 @@
 
 #include "win32hle.h"
 #include "stl.h"
+#include <stdatomic.h>
+
 #include "d3d9_int.h"
 
 #define RING_SIZE (64u << 20)
@@ -1035,36 +1037,71 @@ int gpu_shot(dev_t_ *d, const char *path) {
 
 /* With a window: the back buffer to win32hle's window surface, which its
  * presenter (screen.c) scales into the window, F11 and F12 and the mouse's
- * mapping included, as it does a GDI game's. One readback a frame, the CPU
- * waiting for the GPU: a CAMetalLayer of our own would save it. */
-static void to_window(dev_t_ *d) {
-    static uint8_t *px;
-    static int pw, ph;
+ * mapping included, as it does a GDI game's.
+ *
+ * Without the CPU waiting for the GPU, as tpw-recomp's DirectDraw does it
+ * (d3d_metal.m): each Present ends its frame with a copy of the back buffer
+ * into one of three shared buffers, and the window shows the newest copy the
+ * GPU has finished, a frame or two behind. Waiting for each frame instead
+ * (the first way) left the window at 40% of the headless frame rate. */
+#define SHOW 3
+static id<MTLBuffer> g_show[SHOW];
+static _Atomic uint64_t g_show_done[SHOW];             /* the frame each holds, once the GPU is done */
+static uint64_t g_show_seq, g_shown;
+static int g_show_w, g_show_h;
+static uint8_t *g_win_px;                               /* what the window surface is */
+
+/* The copy of this frame, into the buffer least recently started. */
+static void window_copy(dev_t_ *d, id<MTLCommandBuffer> c) {
     res_t *bb = OBJ(d->backbuffer, res_t);
     if (!bb->gpu) return;
     id<MTLTexture> t = (__bridge id<MTLTexture>)bb->gpu;
     int w = (int)t.width, h = (int)t.height;
-    flush_wait();
-    if (w != pw || h != ph) {
-        free(px);
-        px = malloc((size_t)w * (size_t)h * 4);
-        pw = w, ph = h;
-        hle_gdi_window_surface(px, w, h, w * 4, 32);
+    if (w != g_show_w || h != g_show_h) {               /* a new size: the old copies are of no use */
+        for (int i = 0; i < SHOW; i++) g_show[i] = nil, atomic_store(&g_show_done[i], 0);
+        free(g_win_px);
+        g_win_px = calloc((size_t)w * (size_t)h, 4);
+        g_show_w = w, g_show_h = h, g_shown = 0;
+        hle_gdi_window_surface(g_win_px, w, h, w * 4, 32);
     }
-    [t getBytes:px bytesPerRow:(NSUInteger)w * 4 fromRegion:MTLRegionMake2D(0, 0, (NSUInteger)w, (NSUInteger)h) mipmapLevel:0];
+    int i = (int)(g_show_seq % SHOW);
+    NSUInteger n = (NSUInteger)w * (NSUInteger)h * 4;
+    if (!g_show[i]) g_show[i] = [G->dev newBufferWithLength:n options:MTLResourceStorageModeShared];
+    atomic_store(&g_show_done[i], 0);                   /* being written */
+    id<MTLBlitCommandEncoder> bl = [c blitCommandEncoder];
+    [bl copyFromTexture:t sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+             sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1) toBuffer:g_show[i]
+      destinationOffset:0 destinationBytesPerRow:(NSUInteger)w * 4 destinationBytesPerImage:n];
+    [bl endEncoding];
+    uint64_t seq = ++g_show_seq;
+    _Atomic uint64_t *done = &g_show_done[i];
+    [c addCompletedHandler:^(id<MTLCommandBuffer> b) { (void)b; atomic_store(done, seq); }];
+}
+/* The newest finished copy to the window, if it is newer than what it shows. */
+static void window_show(void) {
+    int best = -1;
+    uint64_t newest = g_shown;
+    for (int i = 0; i < SHOW; i++) {
+        uint64_t s = atomic_load(&g_show_done[i]);
+        if (s > newest) newest = s, best = i;
+    }
+    if (best < 0) return;
+    memcpy(g_win_px, g_show[best].contents, (size_t)g_show_w * (size_t)g_show_h * 4);
+    g_shown = newest;
     hle_gdi_window_touched();
 }
 
 void gpu_present(dev_t_ *d) {
     if (!G) return;
-    if (!stl_headless) to_window(d);
     end_encoder();
     id<MTLCommandBuffer> c = command();
+    if (!stl_headless) window_copy(d, c);
     dispatch_semaphore_t sem = G->inflight;
     [c addCompletedHandler:^(id<MTLCommandBuffer> b) { (void)b; dispatch_semaphore_signal(sem); }];
     [c commit];
     G->cmd = nil;
     dispatch_semaphore_wait(G->inflight, DISPATCH_TIME_FOREVER);
+    if (!stl_headless) window_show();
     G->frame++;
     G->ring_i = (G->ring_i + 1) % FRAMES, G->ring_used = 0;
     G->gen++;

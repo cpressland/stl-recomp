@@ -336,9 +336,9 @@ scan codes); eight minutes of flight in the first mission with no fault.
 `tools/test/smoke.sh` runs the intro, menu and mission headless and
 checks each drew.
 
-Not done: fixed function (the game has drawn none so far), the CPU
-readback to the window (a CAMetalLayer would save it), depth bias's scale,
-sRGB, table fog, Doppler and sound cones, ffmpeg in the app. Not tried:
+Not done: fixed function (the game has drawn none so far), depth bias's
+scale, sRGB, table fog, Doppler and sound cones. (The window's copy of each
+frame no longer waits for the GPU, and the app carries ffmpeg: 2026-11-08.) Not tried:
 combat, skirmish, the other missions, a real mouse and keyboard in the
 window.
 

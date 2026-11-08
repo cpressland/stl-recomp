@@ -19,7 +19,7 @@ stl-recomp lacks by comparison, and the order to close it in.
 | First-run build | ~10 minutes, 3 GB | ~12 minutes, 8 GB at its peak (was ~1 hour; done 2026-11-08) |
 | Movies in the app | n/a (TPW's are Smacker, in win32hle) | play: the app carries a static Bink-only ffmpeg (`app/toolchain.sh`; done 2026-11-08) |
 | Resolution | `--resolution WxH\|native\|options`, remembered; first launch is native | the game's Video options only, from a fixed list capped at 1920x1080 (`d3d9.c` `modes()`); the Mac's own size is never offered |
-| Presenting | Metal straight to the window (`d3d_metal.m`) | Metal renders, then the frame is **read back to the CPU** and shown through the GDI window surface every frame |
+| Presenting | Metal, each flip's frame copied down without waiting (a ring of three), shown by screen.c | the same, since 2026-11-08 (it waited for the GPU each frame before: 40% of the headless frame rate) |
 | Mouse options | `--free-mouse` | none (relative mode always on while focused) |
 | Screenshots | `--shot`, `--shot-after`, `--shot-every` | env vars only (`STL_SHOT`, `STL_SHOT_EVERY`) |
 | Bring-up tracing | `src/host/trace.c` (`-DTPW_TRACE=ON`: first-hit, ring, argument traces) | `--trace` (imports only) |
@@ -56,10 +56,13 @@ stl-recomp lacks by comparison, and the order to close it in.
      longest file from 24 minutes to under 2.
    Left, if wanted: lift the modules in parallel (the lift is one process,
    D3DX's 2 minutes of it), and stop lifting switch arms as copies at all.
-5. **Present without the readback.** Draw the back buffer into the SDL
-   window's `CAMetalLayer` directly (as `d3d_metal.m` does for TPW) instead
-   of reading every frame back to the CPU. Better frame rate and latency at
-   high resolutions, and Retina-sharp output.
+5. ~~**Present without the readback.**~~ Done, as TPW does it (this note
+   first said TPW draws straight to a `CAMetalLayer`; it doesn't): each
+   Present copies the back buffer into one of three shared buffers without
+   waiting, and the window shows the newest one finished. 11,400 frames to
+   34,200 in the same 150-second windowed run. A `CAMetalLayer` of the
+   game's own would save the last copy too, but would take screen.c's
+   scaling, menus and mouse mapping with it: not worth it now.
 6. **Resolutions.** Offer the Mac's real display modes, its native size and
    the common widescreen sizes, not a fixed list capped at 1920x1080. Add
    `--resolution WxH|native` (written into the game's own settings), and
