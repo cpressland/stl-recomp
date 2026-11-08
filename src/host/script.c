@@ -29,7 +29,7 @@
 #define WM_RBUTTONDOWN 0x0204u
 #define WM_RBUTTONUP   0x0205u
 
-typedef struct { char kind; int x, y; double t; } ev_t;   /* m move, c click, r right click, k key, d/u key down/up */
+typedef struct { char kind; int x, y; double t; } ev_t;   /* m move, c click, r right click, k key, d/u key down/up, v relative move */
 #define MAX_EV 256
 static ev_t g_ev[MAX_EV];
 static int g_nev;
@@ -45,6 +45,7 @@ int script_arg(int argc, char **argv, int i) {
     else if (!strcmp(argv[i], "--key")) e.kind = 'k';
     else if (!strcmp(argv[i], "--keydown")) e.kind = 'd';
     else if (!strcmp(argv[i], "--keyup")) e.kind = 'u';
+    else if (!strcmp(argv[i], "--rel")) e.kind = 'v';
     else return 0;
     if (e.kind == 'k' || e.kind == 'd' || e.kind == 'u') {
         char *at = strchr(a, '@');
@@ -117,6 +118,10 @@ static void *run(void *arg) {
             sleep_ms(150);
             key(0, (uint32_t)e->x);
             fprintf(stderr, "[input] %.1fs key %d\n", e->t, e->x);
+            break;
+        case 'v':                               /* the mouse moved by x,y: past the screen's edge too */
+            mach_enter(); hle_input_motion(e->x, e->y); mach_leave();
+            fprintf(stderr, "[input] %.1fs rel %d,%d\n", e->t, e->x, e->y);
             break;
         case 'd': case 'u':                     /* a key held: down, and later up */
             key(e->kind == 'd', (uint32_t)e->x);

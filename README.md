@@ -123,7 +123,9 @@ STL_SHOT=shots STL_SHOT_EVERY=5000 stl --game DIR/game --run --headless --mute -
 
 Input is `--move x,y@s`, `--click x,y@s`, `--rclick x,y@s`, `--key vk@s`, and
 `--keydown vk@s` / `--keyup vk@s` for a key held (E, 0x45, for the power
-wheel), at `s` seconds from the start, in the game's 1024x768.
+wheel), and `--rel dx,dy@s` for the mouse moved by dx, dy (as in the window,
+where the mouse is held as relative motion: the camera turns past the edge),
+at `s` seconds from the start, in the game's 1024x768.
 
 `tools/test/smoke.sh BUILD/stl GAME` does that and checks it: the intro,
 the menu and the first mission all draw, the ship takes the throttle,
@@ -162,6 +164,7 @@ review, merged into a local `stl-local`:
 | `win32hle-dx9-system-dlls` | `d3d9`, `dinput8` and XInput load as system DLLs | **Yes**: the game loads `d3d9.dll` at run time |
 | `win32hle-dsound3d` | DirectSound 3D, on `win32hle-dsound-cursor` | **Yes**: the game places every sound |
 | `win32hle-warp-picture-size` | SetCursorPos puts the pointer by the picture's size, on `win32hle-mouse-confine` | **Yes**: the power distribution wheel (E) centres the cursor |
+| `win32hle-raw-mouse` | DirectInput's relative axes count the mouse's own movement; `hle_screen_relative`, on `win32hle-warp-picture-size` and `win32hle-dinput8` | **Yes**: the camera turns past the window's edge |
 | tpw-recomp's (`win32hle-dinput`, `-gdi-lfwidth`, `-mouse-confine`, `-dsound-cursor`, `-metal`) | DirectInput, Metal and the rest | for the host, Phase 3 on |
 
 All of them are on [cpressland/pcrecomp](https://github.com/cpressland/pcrecomp):
@@ -179,6 +182,8 @@ git add runtime/win32hle/README.md && git commit --no-edit
 git merge --no-edit cpressland/lift-eh32-eh-prolog
 git merge --no-edit cpressland/win32hle-dinput8 cpressland/win32hle-dx9-system-dlls cpressland/win32hle-dsound3d
 git merge --no-edit cpressland/win32hle-warp-picture-size
+git merge --no-edit cpressland/win32hle-raw-mouse   # screen.c: keep warp()'s g_rel_on line
+git add runtime/win32hle/screen.c && git commit --no-edit
 ```
 
 When a branch is merged upstream, drop it from this list (and the table).

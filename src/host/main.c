@@ -115,7 +115,7 @@ static void usage(void) {
            "  --watchdog S stop after S seconds, saying where the game was\n"
            "  --trace      every import call, as it is made\n"
            "  --verbose    every stub as it is bound, every Direct3D 9 call\n"
-           "  --move x,y@s --click x,y@s --rclick x,y@s --key vk@s --keydown vk@s --keyup vk@s   input, s seconds after the start\n");
+           "  --move x,y@s --click x,y@s --rclick x,y@s --key vk@s --keydown vk@s --keyup vk@s --rel dx,dy@s   input, s seconds after the start\n");
 }
 
 /* The program's main (exe.c), and the app's way in. */
@@ -180,6 +180,10 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
     }
 
     if (chdir(game_full) != 0) { fprintf(stderr, "cannot enter %s\n", game_full); return 1; }
+    /* The game draws its own cursor and turns the camera by DirectInput's
+     * relative axes: the window holds the mouse as relative motion, so the
+     * camera keeps turning past the window's edge, as on Windows. */
+    hle_screen_relative(1);
     if (hle_screen_open(STL_TITLE, !g_windowed, g_headless) != 0) return 1;
     /* The game pumps its window's messages on a thread of its own, and
      * AppKit takes events on the main thread only: SDL is pumped there (at
