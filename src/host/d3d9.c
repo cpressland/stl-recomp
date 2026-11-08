@@ -340,6 +340,13 @@ static void defaults(dev_t_ *d) {
 }
 
 /* CreateDevice(adapter, type, hwnd, flags, D3DPRESENT_PARAMETERS*, &device) */
+/* A full-screen device is a display mode change: the screen (GetSystemMetrics,
+ * the game's window, where the mouse can go) is now the back buffer's size,
+ * as DirectDraw's SetDisplayMode makes it. Without this the screen stays
+ * 640x480 and the game keeps its cursor above y 480. */
+static void display_mode(dev_t_ *d) {
+    if (!d->params[8]) hle_set_screen_size((int)d->params[0], (int)d->params[1]);
+}
 static void d_CreateDevice(void) {
     count();
     dev_t_ *d;
@@ -366,6 +373,7 @@ static void d_CreateDevice(void) {
     for (int i = 0; i < 512; i++) d->transform[i][0] = d->transform[i][5] = d->transform[i][10] = d->transform[i][15] = 1;
     defaults(d);
     gpu_device(d);
+    display_mode(d);
     out_obj(A32(6), o);
     RET(D3D_OK, 7);
 }
@@ -429,6 +437,7 @@ static void v_Reset(void) {
     if (d->depth) { res_t *z = OBJ(d->depth, res_t); z->width = d->params[0], z->height = d->params[1]; }
     defaults(d);
     gpu_device(d);
+    display_mode(d);
     fprintf(stderr, "[d3d9] Reset: %ux%u\n", d->params[0], d->params[1]);
     RET(D3D_OK, 2);
 }
