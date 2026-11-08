@@ -432,7 +432,7 @@ class Install:
     def analyse(self):
         """Each module's headers, C++ classes, function catalog, code in data."""
         shutil.rmtree(self.analysis, ignore_errors=True)
-        say('cataloguing the four modules\' functions (a few minutes)...')
+        say('cataloguing the modules\' functions: the game, its DLLs, the missions\' scripts (a few minutes)...')
         self.run(sys.executable, '-I', os.path.join(self.stl_src, 'tools', 'gen', 'analyse.py'),
                  self.game, self.analysis)
 

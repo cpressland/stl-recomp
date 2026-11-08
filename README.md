@@ -67,7 +67,7 @@ protection. See [docs/PLAN.md](docs/PLAN.md) for the whole survey.
 
 ## The lift
 
-Four modules are lifted, each at its own fixed base (`tools/gen/modules.py`)
+The game's modules are lifted, each at its own fixed base (`tools/gen/modules.py`)
 so that one dispatch table holds them all, and a call through one module's
 import slot finds the other module's lifted function once the host binds it:
 
@@ -76,6 +76,7 @@ import slot finds the other module's lifted function once the host binds it:
 | `Legacy.exe` 1.2 | `0x00400000` | the game: Mad Doc's Mad3D engine, MSVC 7.1 |
 | `d3dx9_27.dll` | `0x01000000` (moved from `0x00400000`) | D3DX, August 2005: the HLSL compiler and effects the game builds its shaders with at startup, texture loading, maths |
 | `msvcr71.dll`, `msvcp71.dll` | their own | the Visual C++ 7.1 C runtime and C++ standard library |
+| `missions/*.dsl`, `*.drl` (38) | `0x02000000` up, 256 KB apart (all moved from `0x10000000`) | each mission's script (an S) and its runner (an R), which the game loads with `LoadLibrary` as the mission starts: the briefing, the objectives, the mission's events |
 
 ```
 .venv/bin/python -I tools/install/install.py --dest DIR     # after the game folder: analyse and lift
@@ -142,8 +143,8 @@ called. `STL_DUMP_SHADERS=DIR` writes each shader D3DX compiles,
 `HLE_TRACE_EH=1` each C++ throw and where it lands. The game's saves and
 settings go to a drive `U:`, `DIR/User`, beside the game folder.
 
-What the host is (`src/host`): `loader.c` maps the four modules at their
-bases and binds them to each other (D3DX's `msvcrt.dll` imports to
+What the host is (`src/host`): `loader.c` maps the modules at their
+bases (the missions' scripts attached when the game loads them) and binds them to each other (D3DX's `msvcrt.dll` imports to
 msvcr71) and to win32hle; `wide.c` the Unicode calls; `shims.c` the rest
 win32hle lacks; `setjmp.c` D3DX's `setjmp`/`longjmp` on eh32's landing
 pads; `d3d9.c` Direct3D 9's interfaces and state, `d3d9_metal.m` the same

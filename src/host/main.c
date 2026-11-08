@@ -1,7 +1,7 @@
 /*
  * Star Trek: Legacy - the native host, for macOS (and later Linux).
  *
- * The lifted C of all four modules (run_lift.py) on pcrecomp's
+ * The lifted C of the game's modules (run_lift.py) on pcrecomp's
  * runtime/win32hle: Legacy.exe, d3dx9_27.dll and the Visual C++ 7.1
  * runtime DLLs are mapped and bound to each other (loader.c), every other
  * import is win32hle's or this host's (shims.c, d3d9.c), and the DLLs are

@@ -43,7 +43,7 @@ def analyse(game, work, module):
     got = pefile.PE(src, fast_load=True).FILE_HEADER.TimeDateStamp
     if got != stamp:
         raise SystemExit(f'{src}: PE timestamp 0x{got:08X}, this project lifts 0x{stamp:08X}')
-    img = os.path.join(out, file)
+    img = os.path.join(out, os.path.basename(file))
     rebase(src, base, img) if pefile.PE(src, fast_load=True).OPTIONAL_HEADER.ImageBase != base \
         else shutil.copyfile(src, img)
     t, py = tools(), sys.executable
@@ -69,7 +69,7 @@ def main():
         raise SystemExit(__doc__)
     game, work, want = sys.argv[1], sys.argv[2], set(sys.argv[3:])
     mods = [m for m in MODULES if not want or m[0] in want]
-    with concurrent.futures.ProcessPoolExecutor(len(mods)) as ex:
+    with concurrent.futures.ProcessPoolExecutor(min(len(mods), os.cpu_count() or 4)) as ex:
         for line in ex.map(analyse, [game] * len(mods), [work] * len(mods), mods):
             print(line, flush=True)
 

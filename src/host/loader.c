@@ -1,6 +1,8 @@
 /*
- * loader.c - the four lifted modules into guest memory, and their imports
- * bound, as Windows' loader would.
+ * loader.c - the lifted modules into guest memory, and their imports
+ * bound, as Windows' loader would. The missions' scripts (missions\\*.dsl,
+ * *.drl) are mapped with the rest and attached when the game loads them
+ * (stl_load_library, from LoadLibraryA).
  *
  * Each module is mapped at the base it was lifted at (tools/gen/modules.py,
  * STL_MODULES in recomp_target.h): Legacy.exe and the two runtime DLLs at
@@ -47,7 +49,11 @@ static uint8_t *slurp(const char *path, size_t *n) {
 
 /* Map path at base: headers, sections, and its relocations if base is not
  * the file's own. 0 on success. */
-int stl_map_at(const char *path, uint32_t base, pe_image *img) {
+static int map_at(const char *path, uint32_t base, pe_image *img, int reserve);
+int stl_map_at(const char *path, uint32_t base, pe_image *img) { return map_at(path, base, img, 1); }
+/* reserve 0: base is already this module's (a script loaded again), its
+ * pages are written over from the file. */
+static int map_at(const char *path, uint32_t base, pe_image *img, int reserve) {
     size_t flen;
     uint8_t *file = slurp(path, &flen);
     if (!file) { fprintf(stderr, "[loader] cannot read %s\n", path); return 1; }
@@ -61,11 +67,12 @@ int stl_map_at(const char *path, uint32_t base, pe_image *img) {
     }
     pe_opt_header32 *opt = &nt->OptionalHeader;
     uint32_t span = (opt->SizeOfImage + PAGE - 1) & ~(PAGE - 1);
-    if (hle_vm_reserve(base, span) != base) {
+    if (reserve && hle_vm_reserve(base, span) != base) {
         free(file);
         fprintf(stderr, "[loader] 0x%08X-0x%08X is in use: %s cannot go there\n", base, base + span, path);
         return 1;
     }
+    if (!reserve) memset(hle_ptr(base), 0, span);          /* .bss and the rest: as a fresh map */
     memcpy(hle_ptr(base), file, opt->SizeOfHeaders < flen ? opt->SizeOfHeaders : flen);
     pe_section_header *sec = (pe_section_header *)((uint8_t *)opt + nt->FileHeader.SizeOfOptionalHeader);
     for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) {
@@ -102,8 +109,14 @@ static const char *alias(const char *dll) {
     return !strcasecmp(dll, "msvcrt.dll") ? "msvcr71.dll" : dll;
 }
 
+static const char *base_name(const char *p) {
+    const char *a = strrchr(p, '\\'), *b = strrchr(p, '/');
+    if (b > a) a = b;
+    return a ? a + 1 : p;
+}
+
 stl_module *stl_module_named(const char *dll) {
-    dll = alias(dll);
+    dll = alias(base_name(dll));
     for (int i = 0; i < g_stl_nmod; i++)
         if (!strcasecmp(g_stl_mod[i].file, dll)) return &g_stl_mod[i];
     return NULL;
@@ -112,7 +125,13 @@ stl_module *stl_module_named(const char *dll) {
 /* An export of a mapped module, by name or (name NULL) ordinal; 0 if none.
  * A forwarder (an RVA inside the export directory) is not followed: none of
  * these modules has one. */
-static uint32_t export_of(const stl_module *m, const char *name, uint32_t ordinal) {
+stl_module *stl_module_at(uint32_t base) {
+    for (int i = 0; i < g_stl_nmod; i++)
+        if (g_stl_mod[i].img.base == base) return &g_stl_mod[i];
+    return NULL;
+}
+
+uint32_t stl_export_of(const stl_module *m, const char *name, uint32_t ordinal) {
     pe_dos_header *dos = (pe_dos_header *)hle_ptr(m->img.base);
     pe_nt_headers32 *nt = (pe_nt_headers32 *)hle_ptr(m->img.base + (uint32_t)dos->e_lfanew);
     pe_data_dir d = nt->OptionalHeader.DataDirectory[DIR_EXPORT];
@@ -142,7 +161,7 @@ static uint32_t export_of(const stl_module *m, const char *name, uint32_t ordina
 
 uint32_t stl_export(const char *dll, const char *name) {
     stl_module *m = stl_module_named(dll);
-    return m ? export_of(m, name, 0) : 0;
+    return m ? stl_export_of(m, name, 0) : 0;
 }
 
 /* Bind every import of m. Returns how many are stubs (win32hle lacks them). */
@@ -160,7 +179,7 @@ int stl_bind(stl_module *m) {
             const char *name = by_ord ? NULL : (const char *)hle_ptr(base + *ilt + 2);
             uint32_t va = 0;
             /* A host answer for a lifted export wins (stl_shims: none needed yet). */
-            if (to) va = export_of(to, name, *ilt & 0xFFFFu);
+            if (to) va = stl_export_of(to, name, *ilt & 0xFFFFu);
             if (va) {
                 lifted++;
             } else if (to && strcasecmp(dll, to->file) == 0) {
@@ -191,11 +210,13 @@ int stl_bind(stl_module *m) {
 }
 
 int stl_load(const char *game) {
-    static const struct { const char *file; uint32_t base, entry, stamp; } want[] = STL_MODULES;
+    static const struct { const char *file; uint32_t base, entry, stamp; int on_demand; } want[] = STL_MODULES;
     for (size_t i = 0; i < sizeof want / sizeof want[0]; i++) {
         stl_module *m = &g_stl_mod[g_stl_nmod];
         char guest[300], host[4096];
         snprintf(guest, sizeof guest, "C:\\%s", want[i].file);
+        /* The missions' scripts are mapped now too (so the heap never takes
+         * their place), and attached when the game loads them. */
         if (!hle_host_path(guest, host, sizeof host)) {
             fprintf(stderr, "[loader] no %s in %s\n", want[i].file, game);
             return 1;
@@ -206,15 +227,79 @@ int stl_load(const char *game) {
                     host, m->img.stamp);
             return 1;
         }
-        m->file = want[i].file;
+        m->file = base_name(want[i].file);
+        m->path = want[i].file;
         m->is_exe = i == 0;
-        hle_module_add(guest, m->img.base, m->img.resource_rva, m->img.resource_size, m->is_exe);
+        m->on_demand = want[i].on_demand;
+        if (!m->on_demand) hle_module_add(guest, m->img.base, m->img.resource_rva, m->img.resource_size, m->is_exe);
         g_stl_nmod++;
-        fprintf(stderr, "[loader] %-13s 0x%08X-0x%08X entry 0x%08X\n", m->file, m->img.base,
-                m->img.base + m->img.span, m->img.entry);
+        if (!m->on_demand || stl_verbose)
+            fprintf(stderr, "[loader] %-13s 0x%08X-0x%08X entry 0x%08X\n", m->file, m->img.base,
+                    m->img.base + m->img.span, m->img.entry);
     }
     for (int i = 0; i < g_stl_nmod; i++) g_stl_stubs += stl_bind(&g_stl_mod[i]);
     return 0;
+}
+
+static uint32_t dll_main(stl_module *m, uint32_t reason) {
+    if (!m->img.entry) return 1;
+    uint32_t args[3] = { m->img.base, reason, 0 };
+    return hle_call_guest(m->img.entry, 3, args);
+}
+
+/* The lifted modules a module imports from that the game loads itself: a
+ * mission's R imports its S. Calls fn on each. */
+static void each_on_demand_import(stl_module *m, void (*fn)(stl_module *)) {
+    if (!m->img.import_rva) return;
+    for (pe_import_descriptor *d = (pe_import_descriptor *)hle_ptr(m->img.base + m->img.import_rva); d->Name; d++) {
+        stl_module *to = stl_module_named((const char *)hle_ptr(m->img.base + d->Name));
+        if (to && to != m && to->on_demand) fn(to);
+    }
+}
+static void load_dep(stl_module *m) { stl_load_library(m->path); }
+static void free_dep(stl_module *m) { stl_free_library(m->img.base); }
+
+/* LoadLibrary of a mission's script: as Windows would, the modules it
+ * imports from first, then its DllMain. A module freed and loaded again
+ * starts from the file again, its data as the file has it. */
+uint32_t stl_load_library(const char *name) {
+    stl_module *m = name ? stl_module_named(name) : NULL;
+    if (!m || !m->on_demand) return 0;
+    if (m->refs++) return m->img.base;
+    char guest[300], host[4096];
+    snprintf(guest, sizeof guest, "C:\\%s", m->path);
+    if (m->used) {
+        if (!hle_host_path(guest, host, sizeof host) || map_at(host, m->img.base, &m->img, 0) != 0) {
+            m->refs = 0;
+            return 0;
+        }
+        stl_bind(m);
+    }
+    m->used = 1;
+    if (!m->listed) {
+        hle_module_add(guest, m->img.base, m->img.resource_rva, m->img.resource_size, 0);
+        m->listed = 1;
+    }
+    each_on_demand_import(m, load_dep);
+    fprintf(stderr, "[loader] %s loaded at 0x%08X: DllMain(PROCESS_ATTACH)\n", m->file, m->img.base);
+    if (!dll_main(m, 1)) {
+        fprintf(stderr, "[loader] %s refused to attach\n", m->file);
+        each_on_demand_import(m, free_dep);
+        m->refs = 0;
+        return 0;
+    }
+    return m->img.base;
+}
+
+int stl_free_library(uint32_t base) {
+    stl_module *m = stl_module_at(base);
+    if (!m || !m->on_demand) return 0;
+    if (m->refs > 0 && --m->refs == 0) {
+        fprintf(stderr, "[loader] %s freed: DllMain(PROCESS_DETACH)\n", m->file);
+        dll_main(m, 0);
+        each_on_demand_import(m, free_dep);
+    }
+    return 1;
 }
 
 /* DLL_PROCESS_ATTACH for each DLL, a DLL after those it imports from, as

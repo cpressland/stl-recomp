@@ -24,15 +24,23 @@ static void s_MessageBoxA(void) {
 /* A system DLL by its full path (the game builds C:\WINDOWS\SYSTEM32\d3d9.dll
  * from GetSystemDirectoryA): win32hle knows them by name, so anything under
  * C:\WINDOWS\ is asked for by its name alone. */
-static void hle_LoadLibraryA(void) {           /* win32hle's own, under ours */
+static recomp_func_t hle_own(const char *name) {      /* win32hle's own, under ours */
+    for (const win32hle_shim *m = win32hle_module; m->name; m++)
+        if (!strcmp(m->name, name)) return m->fn;
+    hle_fatal("win32hle has no module function");
+    return NULL;
+}
+static void hle_LoadLibraryA(void) {
     static recomp_func_t f;
-    for (const win32hle_shim *m = win32hle_module; !f && m->name; m++)
-        if (!strcmp(m->name, "LoadLibraryA")) f = m->fn;
-    if (!f) hle_fatal("win32hle has no LoadLibraryA");
+    if (!f) f = hle_own("LoadLibraryA");
     f();
 }
+/* A mission's script (missions\STL12S.dsl) is lifted: loaded, attached and
+ * freed by loader.c, its exports its own. */
 static void k_LoadLibraryA(void) {
     const char *path = A32(0) ? ASTR(0) : NULL;
+    uint32_t lifted = stl_load_library(path);
+    if (lifted) RET(lifted, 1);
     if (path && !strncasecmp(path, "C:\\WINDOWS\\", 11)) {
         const char *base = strrchr(path, '\\') + 1;
         uint32_t mark = hle_scratch_mark();
@@ -42,6 +50,27 @@ static void k_LoadLibraryA(void) {
         return;
     }
     hle_LoadLibraryA();
+}
+
+static void k_GetProcAddress(void) {                     /* (module, name or ordinal) */
+    static recomp_func_t f;
+    stl_module *m = stl_module_at(A32(0));
+    if (m) {
+        uint32_t n = A32(1), va = n < 0x10000u ? stl_export_of(m, NULL, n) : stl_export_of(m, ASTR(1), 0);
+        if (!va) {
+            fprintf(stderr, "[loader] GetProcAddress(%s, %s): none\n", m->file, n < 0x10000u ? "(ordinal)" : ASTR(1));
+            hle_set_last_error(127);                     /* ERROR_PROC_NOT_FOUND */
+        }
+        RET(va, 2);
+    }
+    if (!f) f = hle_own("GetProcAddress");
+    f();
+}
+static void k_FreeLibrary(void) {
+    static recomp_func_t f;
+    if (stl_free_library(A32(0))) RET(1, 1);
+    if (!f) f = hle_own("FreeLibrary");
+    f();
 }
 
 static void k_DisableThreadLibraryCalls(void) { RET(1, 1); }
@@ -194,7 +223,7 @@ static void ws2_WSACleanup(void)    { stl_call_a("WSACleanup"); }
 
 const win32hle_shim stl_shims[] = {
     { "MessageBoxA", s_MessageBoxA },
-    { "LoadLibraryA", k_LoadLibraryA },
+    { "LoadLibraryA", k_LoadLibraryA }, { "GetProcAddress", k_GetProcAddress }, { "FreeLibrary", k_FreeLibrary },
     { "DisableThreadLibraryCalls", k_DisableThreadLibraryCalls },
     { "IsDBCSLeadByte", k_IsDBCSLeadByte }, { "IsDBCSLeadByteEx", k_IsDBCSLeadByteEx },
     { "GetConsoleCP", k_GetConsoleCP }, { "GetConsoleOutputCP", k_GetConsoleCP },
