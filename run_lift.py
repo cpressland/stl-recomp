@@ -61,6 +61,18 @@ SETJMP_IMPORTS = (b'_setjmp3', b'_setjmp', b'setjmp')
 # few of its files kept one core busy for minutes after the rest were done.
 CHUNK = {'d3dx9': 100}
 
+# A lifted function this many lines long or more is compiled without
+# optimisation (clang's optnone), by module. The long ones are D3DX's: one
+# 77 KB function inside its shader compiler, whose switch arms the catalog
+# takes for entries, each lifted as its own copy of nearly the whole body
+# (2 million lines over 10,000 a function). At -O1 one file of them took 24
+# minutes to compile, the whole first build's critical path; the next, at
+# 3,000 to 8,000 lines a copy, 5 minutes. Unoptimised, 86 and 15 seconds.
+# They run while shaders are compiled at load, not per frame. Elsewhere only
+# the extreme: the game's own long functions may be its hot ones.
+BIG_FUNCTION_LINES = {'d3dx9': 3000}
+BIG_FUNCTION_LINES_DEFAULT = 10000
+
 # Remaster patches: C emitted after one instruction, by module (va -> C).
 PATCHES = {}
 
@@ -193,7 +205,7 @@ def lift_module(m, out, idx, entries, log):
     splits = find_splits(md, m.code, m.cs, m.ce, starts)
     starts -= splits
     st = {'setjmp_sites': 0, 'lifted': 0, 'errors': 0, 'no_terminator': 0, 'eh_frames': 0, 'eh_pads': 0, 'eh_catch_no_pad': 0,
-          'added': 0, 'cpuid': 0, 'hooks': 0}
+          'added': 0, 'cpuid': 0, 'hooks': 0, 'optnone': 0}
     chunk = []
 
     def flush(force=False):
@@ -254,6 +266,9 @@ def lift_module(m, out, idx, entries, log):
                 body = '/* ERROR %s: %s */\nvoid %s(void) { RECOMP_NOT_LIFTED(0x%08Xu); }\n' % (name, e, name, addr)
                 st['errors'] += 1
                 log(f'[{m.name}] error in {name}: {e}')
+        if body.count('\n') >= BIG_FUNCTION_LINES.get(m.name, BIG_FUNCTION_LINES_DEFAULT):
+            body = body.replace('void %s(void)' % name, '__attribute__((optnone, noinline)) void %s(void)' % name, 1)
+            st['optnone'] += 1
         chunk.append((body, addr, name))
         entries.append((addr, name))
         st['lifted'] += 1

@@ -110,7 +110,7 @@ F11 toggles full screen, F12 the scaling, Ctrl+Cmd lets go of the mouse.
 **Star Trek Legacy.app** does all of it: `app/build-app.sh` makes
 `build-app/Star Trek Legacy.app`, which downloads the two files (or takes
 your own), builds the game into `~/Library/Application Support/Star Trek
-Legacy` (about an hour the first time) and opens on Play. It needs only
+Legacy` (about 15 minutes the first time) and opens on Play. It needs only
 Xcode's command line tools. It carries the movies' decoders too: a static
 ffmpeg with Bink alone, built by `app/toolchain.sh` from a pinned source
 tarball and linked into the game (`install.py --ffmpeg`, CMake's
@@ -210,6 +210,7 @@ What `stl-lock` adds to `main`:
 | `win32hle-dsound3d` | DirectSound 3D, on `win32hle-dsound-cursor` | **Yes**: the game places every sound |
 | `win32hle-warp-picture-size` | SetCursorPos puts the pointer by the picture's size | **Yes**: the power distribution wheel (E) centres the cursor |
 | `win32hle-dinput-relative-shared` | a host can give a non-exclusive DirectInput mouse movement alone (`hle_dinput_relative_shared`), on `tpw-local` | **Yes**: the camera turns past the window's edge |
+| `disasm32-decode-cache` | disasm32 decodes each address once (its JSON CLI) | No, but the first build's analysis takes 21 minutes without it, 4 with |
 | `tpw-local` | tpw-recomp's: DirectInput, Metal, the mouse held in the picture and its movement past the edge (`hle_input_raw`), the DirectSound cursor | **Yes**: the host's window, mouse and sound |
 
 To make a new lock (after one of these changes, or `main` moves), merge

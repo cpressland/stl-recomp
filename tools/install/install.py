@@ -460,7 +460,7 @@ class Install:
                      f'-DSTL_SDL_FRAMEWORKS={self.sdl or ""}', f'-DSTL_FFMPEG={self.ffmpeg or ""}')
             self.state['host_config'] = config
             self.save_state()
-        say('compiling (half an hour the first time; after a fix, what changed)...')
+        say('compiling (a few minutes the first time; after a fix, what changed)...')
         self.run(self.cmake, '--build', self.host)
 
     # ---- the order -------------------------------------------------------

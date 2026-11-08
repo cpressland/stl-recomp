@@ -80,7 +80,7 @@ private struct Download: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("It downloads the game's disc image and its 1.2 patch (2.2 GB), then builds the game from them. "
-                 + "That takes about an hour and 12 GB of space; your Mac stays free to use meanwhile.")
+                 + "That takes about 15 minutes and 8 GB of space; your Mac stays free to use meanwhile.")
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Use Files I Already Have…") { installer.ownFiles = true }

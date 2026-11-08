@@ -16,7 +16,7 @@ stl-recomp lacks by comparison, and the order to close it in.
 | pcrecomp pin | `app/pcrecomp.lock`: one commit on the fork with the pending merges | `app/pcrecomp.lock`: the fork's `stl-lock` (done 2026-11-08) |
 | Upstream | six PRs open on sp00nznet/pcrecomp (#158–#164) | seven branches on the fork, no PRs opened |
 | Linux | Flatpak (x86-64, arm64), `app/linux/launcher.c`, CI, published via cpressland/flatpak | macOS only; the D3D9 backend is Metal-only |
-| First-run build | ~10 minutes, 3 GB | ~1 hour, 12 GB (d3dx9's disassembly alone is ~20 minutes) |
+| First-run build | ~10 minutes, 3 GB | ~12 minutes, 8 GB at its peak (was ~1 hour; done 2026-11-08) |
 | Movies in the app | n/a (TPW's are Smacker, in win32hle) | play: the app carries a static Bink-only ffmpeg (`app/toolchain.sh`; done 2026-11-08) |
 | Resolution | `--resolution WxH\|native\|options`, remembered; first launch is native | the game's Video options only, from a fixed list capped at 1920x1080 (`d3d9.c` `modes()`); the Mac's own size is never offered |
 | Presenting | Metal straight to the window (`d3d_metal.m`) | Metal renders, then the frame is **read back to the CPU** and shown through the GDI window surface every frame |
@@ -44,14 +44,18 @@ stl-recomp lacks by comparison, and the order to close it in.
    `app/install.sh`, and a Sparkle key pair (private half in the login
    Keychain). A local `release.sh` run made the DMG, zip and a signed
    appcast. Left: the `SPARKLE_PRIVATE_KEY` repository secret, then a tag.
-4. **Cut the first-run build time.** The hour is mostly d3dx9: its
-   disassembly (~20 min), lift and compile. Options, cheapest first:
-   - cache the disassembly (pcrecomp's decode cache);
-   - lift only the d3dx9 functions the game reaches (it uses the effect
-     compiler, texture loading and maths: a fraction of 14,500 functions);
-   - prebuild nothing from the game, but parallelise analysis and compile
-     harder.
-   The app says "about an hour"; TPW's says ten minutes.
+4. ~~**Cut the first-run build time.**~~ Done: 48 minutes to 12 (disc 17 s,
+   analysis 241 s, lift 185 s, compile 265 s, on an M-series Mac).
+   - disasm32 decodes each address once (pcrecomp `disasm32-decode-cache`):
+     D3DX's analysis 1,263 s to 242 s, the same catalog byte for byte. One
+     38,000-instruction body was being decoded once per each of its 1,114
+     entries.
+   - Those entries are switch arms, each lifted as its own copy of nearly
+     the whole body; lifted functions over 3,000 lines in D3DX (10,000
+     elsewhere) are compiled `optnone` (`run_lift.py`), which took the
+     longest file from 24 minutes to under 2.
+   Left, if wanted: lift the modules in parallel (the lift is one process,
+   D3DX's 2 minutes of it), and stop lifting switch arms as copies at all.
 5. **Present without the readback.** Draw the back buffer into the SDL
    window's `CAMetalLayer` directly (as `d3d_metal.m` does for TPW) instead
    of reading every frame back to the CPU. Better frame rate and latency at
