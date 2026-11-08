@@ -121,6 +121,10 @@ STL_SHOT=shots STL_SHOT_EVERY=5000 stl --game DIR/game --run --headless --mute -
     --click 512,408@75 --click 512,393@95                    # the menu, then the first mission
 ```
 
+Input is `--move x,y@s`, `--click x,y@s`, `--rclick x,y@s`, `--key vk@s`, and
+`--keydown vk@s` / `--keyup vk@s` for a key held (E, 0x45, for the power
+wheel), at `s` seconds from the start, in the game's 1024x768.
+
 `tools/test/smoke.sh BUILD/stl GAME` does that and checks it: the intro,
 the menu and the first mission all draw, the ship takes the throttle,
 nothing faults (about four minutes).
@@ -157,6 +161,7 @@ review, merged into a local `stl-local`:
 | `win32hle-dinput8` | DirectInput 8, on `win32hle-dinput` | **Yes**: the game's mouse |
 | `win32hle-dx9-system-dlls` | `d3d9`, `dinput8` and XInput load as system DLLs | **Yes**: the game loads `d3d9.dll` at run time |
 | `win32hle-dsound3d` | DirectSound 3D, on `win32hle-dsound-cursor` | **Yes**: the game places every sound |
+| `win32hle-warp-picture-size` | SetCursorPos puts the pointer by the picture's size, on `win32hle-mouse-confine` | **Yes**: the power distribution wheel (E) centres the cursor |
 | tpw-recomp's (`win32hle-dinput`, `-gdi-lfwidth`, `-mouse-confine`, `-dsound-cursor`, `-metal`) | DirectInput, Metal and the rest | for the host, Phase 3 on |
 
 All of them are on [cpressland/pcrecomp](https://github.com/cpressland/pcrecomp):
@@ -173,6 +178,7 @@ git merge --no-edit cpressland/win32hle-eh32     # README: keep both rows
 git add runtime/win32hle/README.md && git commit --no-edit
 git merge --no-edit cpressland/lift-eh32-eh-prolog
 git merge --no-edit cpressland/win32hle-dinput8 cpressland/win32hle-dx9-system-dlls cpressland/win32hle-dsound3d
+git merge --no-edit cpressland/win32hle-warp-picture-size
 ```
 
 When a branch is merged upstream, drop it from this list (and the table).

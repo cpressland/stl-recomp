@@ -115,7 +115,7 @@ static void usage(void) {
            "  --watchdog S stop after S seconds, saying where the game was\n"
            "  --trace      every import call, as it is made\n"
            "  --verbose    every stub as it is bound, every Direct3D 9 call\n"
-           "  --move x,y@s --click x,y@s --rclick x,y@s --key vk@s   input, s seconds after the start\n");
+           "  --move x,y@s --click x,y@s --rclick x,y@s --key vk@s --keydown vk@s --keyup vk@s   input, s seconds after the start\n");
 }
 
 /* The program's main (exe.c), and the app's way in. */
