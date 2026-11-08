@@ -210,6 +210,7 @@ class Install:
         self.host = os.path.join(self.build, 'host')
         self.env = dict(os.environ, PCRECOMP=self.pc_src)
         self.sdl = os.path.join(self.src, 'Frameworks') if a.sdl_frameworks else None
+        self.ffmpeg = os.path.join(self.src, 'ffmpeg') if a.ffmpeg else None
         self.tmp = os.path.join(self.dest, 'tmp')
         self.state_path = os.path.join(self.dest, 'install.json')
         try:
@@ -244,7 +245,8 @@ class Install:
         lift = tree_hash(os.path.join(tools, 'lift'), os.path.join(REPO, 'run_lift.py'))
         host = tree_hash(os.path.join(REPO, 'CMakeLists.txt'), os.path.join(REPO, 'src'),
                          os.path.join(self.pcrecomp, 'runtime'),
-                         *(os.path.join(self.a.sdl_frameworks, f) for f in SDL_FRAMEWORKS if self.a.sdl_frameworks))
+                         *(os.path.join(self.a.sdl_frameworks, f) for f in SDL_FRAMEWORKS if self.a.sdl_frameworks),
+                         *((self.a.ffmpeg,) if self.a.ffmpeg else ()))
         return {'data': data, 'analysis': f'{data}/{analysis}', 'lift': f'{data}/{analysis}/{lift}',
                 'host': f'{data}/{analysis}/{lift}/{host}'}
 
@@ -288,6 +290,8 @@ class Install:
                     raise Failed(f'no {f} in {self.a.sdl_frameworks}')
         elif subprocess.run(['pkg-config', '--exists', 'sdl2', 'SDL2_ttf']).returncode:
             raise Failed('pkg-config cannot find sdl2 and SDL2_ttf (README: prerequisites)')
+        if self.a.ffmpeg and not os.path.isfile(os.path.join(self.a.ffmpeg, 'lib', 'libavcodec.a')):
+            raise Failed(f'no static ffmpeg (lib/libavcodec.a) in {self.a.ffmpeg}')
         missing = [m for m in ('olefile', 'pefile', 'capstone')
                    if subprocess.run([sys.executable, '-I', '-c', f'import {m}'], capture_output=True).returncode]
         if missing:
@@ -427,6 +431,11 @@ class Install:
                 shutil.rmtree(dst, ignore_errors=True)
                 shutil.copytree(src, dst, symlinks=True)
                 n += 1
+        # ...and the app's ffmpeg likewise (the movies' decoders).
+        if self.ffmpeg and (not os.path.isdir(self.ffmpeg) or tree_hash(self.a.ffmpeg) != tree_hash(self.ffmpeg)):
+            shutil.rmtree(self.ffmpeg, ignore_errors=True)
+            shutil.copytree(self.a.ffmpeg, self.ffmpeg, symlinks=True)
+            n += 1
         say(f'{n} source files changed')
 
     def analyse(self):
@@ -442,13 +451,13 @@ class Install:
         self.run(sys.executable, os.path.join(self.stl_src, 'run_lift.py'), '--work', self.analysis, '--out', self.gen)
 
     def compile(self):
-        config = [self.stl_src, self.pc_src, self.sdl or 'pkg-config', self.cmake]
+        config = [self.stl_src, self.pc_src, self.sdl or 'pkg-config', self.ffmpeg or '', self.cmake]
         if self.state.get('host_config') != config:
             shutil.rmtree(self.host, ignore_errors=True)
         if not os.path.exists(os.path.join(self.host, 'build.ninja')):
             self.run(self.cmake, '-S', self.stl_src, '-B', self.host, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=RelWithDebInfo',
                      f'-DCMAKE_MAKE_PROGRAM={self.ninja}', f'-DPCRECOMP={self.pc_src}', f'-DGEN_DIR={self.gen}',
-                     f'-DSTL_SDL_FRAMEWORKS={self.sdl or ""}')
+                     f'-DSTL_SDL_FRAMEWORKS={self.sdl or ""}', f'-DSTL_FFMPEG={self.ffmpeg or ""}')
             self.state['host_config'] = config
             self.save_state()
         say('compiling (half an hour the first time; after a fix, what changed)...')
@@ -511,12 +520,16 @@ def main():
     ap.add_argument('--pcrecomp', help='the pcrecomp checkout (default: ./pcrecomp, then ../pcrecomp)')
     ap.add_argument('--sdl-frameworks', help='a folder with SDL2.framework and SDL2_ttf.framework '
                     '(default: SDL from pkg-config)')
+    ap.add_argument('--ffmpeg', help='a static ffmpeg, include/ and lib/, for the movies '
+                    '(default: pkg-config\'s, if any; app/toolchain.sh builds one)')
     ap.add_argument('--export-sources', metavar='DIR', help='copy the sources the build needs to DIR, and stop')
     ap.add_argument('--force', action='store_true', help='redo every step')
     ap.add_argument('--status', action='store_true', help='print what a run would redo, as JSON')
     a = ap.parse_args()
     if a.sdl_frameworks:
         a.sdl_frameworks = os.path.abspath(a.sdl_frameworks)
+    if a.ffmpeg:
+        a.ffmpeg = os.path.abspath(a.ffmpeg)
     try:
         if a.export_sources:
             export(a.export_sources, a.pcrecomp)

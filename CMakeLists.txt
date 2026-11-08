@@ -98,12 +98,27 @@ if(STL_MEM_BASE)
 endif()
 target_compile_options(stl_obj PRIVATE -fno-strict-aliasing -fwrapv)
 target_link_libraries(stl_obj PUBLIC stl_sdl pthread m)
-# Movies: pcrecomp's bink.c decodes Bink through ffmpeg when it is there
-# (pkg-config; Homebrew's ffmpeg). Without it they are skipped, as the
-# game's own code allows. The app carries no ffmpeg yet.
-if(NOT STL_SDL_FRAMEWORKS)
+# Movies: pcrecomp's bink.c decodes Bink through ffmpeg. STL_FFMPEG names
+# a static build with Bink alone (include/, lib/: what Star Trek Legacy.app
+# carries, app/toolchain.sh); without it, pkg-config's (Homebrew's ffmpeg)
+# when not building on the app's frameworks. With neither, the movies are
+# skipped, as the game's own code allows.
+set(STL_FFMPEG "" CACHE PATH "a static ffmpeg: include/ and lib/ (empty: pkg-config's, if any)")
+if(STL_FFMPEG)
+  foreach(lib avformat avcodec swresample avutil)
+    if(NOT EXISTS ${STL_FFMPEG}/lib/lib${lib}.a)
+      message(FATAL_ERROR "STL_FFMPEG: no lib${lib}.a in ${STL_FFMPEG}/lib")
+    endif()
+    list(APPEND STL_FFMPEG_LIBS ${STL_FFMPEG}/lib/lib${lib}.a)
+  endforeach()
+  target_include_directories(stl_obj SYSTEM PRIVATE ${STL_FFMPEG}/include)
+  target_compile_definitions(stl_obj PRIVATE HLE_WITH_FFMPEG)
+  target_link_libraries(stl_obj PUBLIC ${STL_FFMPEG_LIBS} m
+                        "-framework CoreFoundation" "-framework CoreVideo" "-framework CoreMedia")
+  message(STATUS "movies: ffmpeg from ${STL_FFMPEG}")
+elseif(NOT STL_SDL_FRAMEWORKS)
   find_package(PkgConfig REQUIRED)
-  pkg_check_modules(FFMPEG IMPORTED_TARGET libavformat libavcodec libavutil libswresample libswscale)
+  pkg_check_modules(FFMPEG IMPORTED_TARGET libavformat libavcodec libavutil libswresample)
   if(FFMPEG_FOUND)
     target_compile_definitions(stl_obj PRIVATE HLE_WITH_FFMPEG)
     target_link_libraries(stl_obj PUBLIC PkgConfig::FFMPEG)

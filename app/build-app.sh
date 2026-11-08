@@ -20,7 +20,7 @@ T="$OUT/toolchain"
 VERSION=${VERSION:-$(git describe --tags --always 2>/dev/null | sed 's/^v//')}
 BUILD=${BUILD:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}
 
-[ -x "$T/python/bin/python3" ] || app/toolchain.sh
+[ -x "$T/python/bin/python3" ] && [ -f "$T/ffmpeg/lib/libavcodec.a" ] || app/toolchain.sh
 
 rm -rf "$APP"
 mkdir -p "$C/MacOS" "$C/Resources" "$C/Frameworks"
@@ -29,6 +29,7 @@ swiftc -O -target arm64-apple-macos26.0 -F "$T/Frameworks" -framework Sparkle \
   app/Launcher/*.swift -o "$C/MacOS/Star Trek Legacy"
 for fw in SDL2 SDL2_ttf Sparkle; do ditto "$T/Frameworks/$fw.framework" "$C/Frameworks/$fw.framework"; done
 ditto "$T/python" "$C/Resources/toolchain/python"
+ditto "$T/ffmpeg" "$C/Resources/toolchain/ffmpeg"
 "$T/python/bin/python3" -I tools/install/install.py --export-sources "$C/Resources/source" >/dev/null
 
 sed -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" app/Info.plist > "$C/Info.plist"

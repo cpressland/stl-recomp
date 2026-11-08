@@ -53,7 +53,7 @@ final class Installer: ObservableObject {
 
     static func arguments(_ extra: [String]) -> [String] {
         ["-I", Paths.installer.path, "--dest", Paths.home.path, "--pcrecomp", Paths.pcrecomp.path,
-         "--sdl-frameworks", Paths.frameworks.path] + extra
+         "--sdl-frameworks", Paths.frameworks.path, "--ffmpeg", Paths.ffmpeg.path] + extra
     }
 
     /// What a build would redo; nil if the app cannot tell (no toolchain).

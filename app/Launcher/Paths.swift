@@ -23,6 +23,7 @@ enum Paths {
     static let python = resources.appendingPathComponent("toolchain/python/bin/python3")
     static let installer = resources.appendingPathComponent("source/stl/tools/install/install.py")
     static let pcrecomp = resources.appendingPathComponent("source/pcrecomp")
+    static let ffmpeg = resources.appendingPathComponent("toolchain/ffmpeg")
     static let frameworks = Bundle.main.privateFrameworksURL!
 
     static func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }

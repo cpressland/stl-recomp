@@ -17,7 +17,7 @@ stl-recomp lacks by comparison, and the order to close it in.
 | Upstream | six PRs open on sp00nznet/pcrecomp (#158–#164) | seven branches on the fork, no PRs opened |
 | Linux | Flatpak (x86-64, arm64), `app/linux/launcher.c`, CI, published via cpressland/flatpak | macOS only; the D3D9 backend is Metal-only |
 | First-run build | ~10 minutes, 3 GB | ~1 hour, 12 GB (d3dx9's disassembly alone is ~20 minutes) |
-| Movies in the app | n/a (TPW's are Smacker, in win32hle) | **skipped**: Bink goes through ffmpeg, found by pkg-config, and the app's toolchain doesn't carry it |
+| Movies in the app | n/a (TPW's are Smacker, in win32hle) | play: the app carries a static Bink-only ffmpeg (`app/toolchain.sh`; done 2026-11-08) |
 | Resolution | `--resolution WxH\|native\|options`, remembered; first launch is native | the game's Video options only, from a fixed list capped at 1920x1080 (`d3d9.c` `modes()`); the Mac's own size is never offered |
 | Presenting | Metal straight to the window (`d3d_metal.m`) | Metal renders, then the frame is **read back to the CPU** and shown through the GDI window surface every frame |
 | Mouse options | `--free-mouse` | none (relative mode always on while focused) |
@@ -37,11 +37,9 @@ stl-recomp lacks by comparison, and the order to close it in.
 1. ~~**Pin pcrecomp and push it.**~~ Done: `app/pcrecomp.lock` pins the
    fork's `stl-lock`, which also takes tpw-local's newer win32hle (its
    relative mouse replaced this project's own `win32hle-raw-mouse`).
-2. **Movies in the app.** Carry ffmpeg's decoding libraries
-   (libavcodec, libavformat, libavutil, libswresample, libswscale; Bink and
-   its audio only) in `app/toolchain.sh`, pinned by checksum like SDL, and
-   build with `HLE_WITH_FFMPEG` from them. Without this, the released app
-   has no intro or mission cinematics.
+2. ~~**Movies in the app.**~~ Done: `app/toolchain.sh` builds ffmpeg 7.1.1
+   (pinned) with the Bink demuxer and decoders alone, static, 8 MB; the app
+   passes it to `install.py --ffmpeg`, and CMake links it (`STL_FFMPEG`).
 3. **Release pipeline.** Port `release.yml`, `app/release.sh` and
    `app/install.sh`; make a Sparkle key pair. *Needs you:* add the
    `SPARKLE_PRIVATE_KEY` secret to the repo and commit the public half. Then

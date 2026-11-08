@@ -12,8 +12,8 @@ game's folder is built from the disc image and the 1.2 patch with no
 Windows and no installer; the game and the three Microsoft DLLs it brings
 are lifted to C; and the native host runs it on Direct3D 9 implemented on
 Metal, with the game's shaders translated to Metal's: the main menu, and
-the first campaign mission's ship, planets, nebula and HUD, draw. Not yet:
-movies (skipped), fixed-function drawing, Doppler and sound cones, and a
+the first campaign mission's ship, planets, nebula and HUD, draw. The movies
+play (Bink, through ffmpeg). Not yet: fixed-function drawing, Doppler and sound cones, and a
 lot of play-testing.
 
 ## What you need
@@ -111,7 +111,11 @@ F11 toggles full screen, F12 the scaling, Ctrl+Cmd lets go of the mouse.
 `build-app/Star Trek Legacy.app`, which downloads the two files (or takes
 your own), builds the game into `~/Library/Application Support/Star Trek
 Legacy` (about an hour the first time) and opens on Play. It needs only
-Xcode's command line tools. It is tpw-recomp's launcher; see that README
+Xcode's command line tools. It carries the movies' decoders too: a static
+ffmpeg with Bink alone, built by `app/toolchain.sh` from a pinned source
+tarball and linked into the game (`install.py --ffmpeg`, CMake's
+`STL_FFMPEG`); built by hand, the game uses Homebrew's ffmpeg if
+pkg-config finds it. It is tpw-recomp's launcher; see that README
 for its options (`STL_HOME`, `STL_ISO`, `STL_PATCH`, `STL_SNAPSHOT`, ...).
 
 For testing, headless, with scripted input and screenshots:
