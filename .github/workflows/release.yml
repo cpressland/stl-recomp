@@ -1,0 +1,47 @@
+# A tag v1.2.3 builds Star Trek Legacy.app (app/release.sh) and publishes it:
+# the disk image, the zip Sparkle and the curl installer fetch, install.sh and
+# the appcast. Nothing of the game is in any of them.
+#
+# Needs the SPARKLE_PRIVATE_KEY secret: the base64 Ed25519 key whose public
+# half is app/sparkle-public-key.txt.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0          # the build number counts commits
+
+      - name: pcrecomp, as app/pcrecomp.lock pins it
+        run: |
+          . app/pcrecomp.lock
+          git clone --filter=blob:none "https://github.com/$repository" ../pcrecomp
+          git -C ../pcrecomp checkout --detach "$ref"
+
+      - uses: actions/cache@v4
+        with:
+          path: build-app/cache
+          key: toolchain-${{ hashFiles('app/toolchain.sh', 'app/requirements.txt') }}
+
+      - name: Build
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          REPOSITORY: ${{ github.repository }}
+        run: VERSION="${GITHUB_REF_NAME#v}" app/release.sh
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd build-app/release
+          gh release create "$GITHUB_REF_NAME" --title "Star Trek Legacy ${GITHUB_REF_NAME#v}" --generate-notes \
+            Star-Trek-Legacy-*.dmg Star-Trek-Legacy-*.zip Star-Trek-Legacy.dmg Star-Trek-Legacy.zip install.sh appcast.xml

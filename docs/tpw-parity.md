@@ -11,8 +11,8 @@ stl-recomp lacks by comparison, and the order to close it in.
 |---|---|---|
 | Game | playable, released | playable start to the first mission's objectives; no full playthrough yet |
 | Mac app | `Theme Park World.app`, released as a DMG, a zip and `install.sh` | `Star Trek Legacy.app` builds locally (`app/build-app.sh`); never released |
-| Updates | Sparkle, signed feed (`appcast.xml`), key in `app/sparkle-public-key.txt` | Sparkle linked, no key, no feed |
-| Releases | `.github/workflows/release.yml` + `app/release.sh` on a `v*` tag | no `.github/` at all |
+| Updates | Sparkle, signed feed (`appcast.xml`), key in `app/sparkle-public-key.txt` | Sparkle key made (public half in `app/sparkle-public-key.txt`), feed from the release |
+| Releases | `.github/workflows/release.yml` + `app/release.sh` on a `v*` tag | `.github/workflows/release.yml` + `app/release.sh` on a `v*` tag (2026-11-08; first release waits on the secret) |
 | pcrecomp pin | `app/pcrecomp.lock`: one commit on the fork with the pending merges | `app/pcrecomp.lock`: the fork's `stl-lock` (done 2026-11-08) |
 | Upstream | six PRs open on sp00nznet/pcrecomp (#158–#164) | seven branches on the fork, no PRs opened |
 | Linux | Flatpak (x86-64, arm64), `app/linux/launcher.c`, CI, published via cpressland/flatpak | macOS only; the D3D9 backend is Metal-only |
@@ -40,10 +40,10 @@ stl-recomp lacks by comparison, and the order to close it in.
 2. ~~**Movies in the app.**~~ Done: `app/toolchain.sh` builds ffmpeg 7.1.1
    (pinned) with the Bink demuxer and decoders alone, static, 8 MB; the app
    passes it to `install.py --ffmpeg`, and CMake links it (`STL_FFMPEG`).
-3. **Release pipeline.** Port `release.yml`, `app/release.sh` and
-   `app/install.sh`; make a Sparkle key pair. *Needs you:* add the
-   `SPARKLE_PRIVATE_KEY` secret to the repo and commit the public half. Then
-   tag `v0.1.0`.
+3. ~~**Release pipeline.**~~ Ported: `release.yml`, `app/release.sh`,
+   `app/install.sh`, and a Sparkle key pair (private half in the login
+   Keychain). A local `release.sh` run made the DMG, zip and a signed
+   appcast. Left: the `SPARKLE_PRIVATE_KEY` repository secret, then a tag.
 4. **Cut the first-run build time.** The hour is mostly d3dx9: its
    disassembly (~20 min), lift and compile. Options, cheapest first:
    - cache the disassembly (pcrecomp's decode cache);

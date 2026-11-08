@@ -156,6 +156,37 @@ on Metal, `dxso.c` the shaders (D3D9 bytecode to Metal Shading Language,
 checked by `tools/dxso`); `cpu.c` the CPU it reports (a Pentium III);
 `script.c` scripted input.
 
+## Releases
+
+Pushing a tag `v1.2.3` runs `.github/workflows/release.yml`, which runs
+`app/release.sh` and publishes the release: `Star-Trek-Legacy-1.2.3.dmg`,
+the zip that Sparkle and `install.sh` fetch, `install.sh`, and
+`appcast.xml`, Sparkle's feed. Nothing of the game is in any of them; the
+app builds it on the player's Mac. pcrecomp is the commit
+`app/pcrecomp.lock` names.
+
+Once there is one, a release installs with
+
+```
+curl -fsSL https://github.com/cpressland/stl-recomp/releases/latest/download/install.sh | sh
+```
+
+or from the disk image (not notarized: the first open needs **Open
+Anyway** in System Settings, Privacy & Security). The app checks for
+updates as it opens and asks before installing one.
+
+The app is signed ad hoc. Sparkle checks each update with its own Ed25519
+signature: the workflow signs with the `SPARKLE_PRIVATE_KEY` secret (the
+private key, base64), and the app holds the public half,
+`app/sparkle-public-key.txt`. The private key is kept in the maintainer's
+login Keychain (service `https://sparkle-project.org`, account
+`stl-recomp`), where Sparkle's `generate_keys --account stl-recomp` finds
+it. To try a release locally:
+
+```
+SPARKLE_PRIVATE_KEY="$(security find-generic-password -s https://sparkle-project.org -a stl-recomp -w)" VERSION=0.0.1 app/release.sh
+```
+
 ## pcrecomp: pending merges
 
 This builds against pcrecomp's `main` plus branches still in review, merged
