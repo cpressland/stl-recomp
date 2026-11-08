@@ -1,0 +1,5 @@
+# The pcrecomp this project builds with: upstream main with the pending
+# merges (README, "pcrecomp: pending merges"), as one commit on the fork's
+# stl-lock branch. A release (and anyone building) checks this out.
+repository=cpressland/pcrecomp
+ref=e63e224c0893aa4d609e7489cb2baa0489cb5d16

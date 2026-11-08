@@ -1,0 +1,82 @@
+# What tpw-recomp has that this project hasn't (2026-11-08)
+
+tpw-recomp (Theme Park World) is the project this one was modelled on. Since
+stl-recomp was started from it, it has gone on to ship: a released Mac app
+with updates, a Linux Flatpak, and a few player-facing options. This is what
+stl-recomp lacks by comparison, and the order to close it in.
+
+## Where the two stand
+
+| | tpw-recomp | stl-recomp |
+|---|---|---|
+| Game | playable, released | playable start to the first mission's objectives; no full playthrough yet |
+| Mac app | `Theme Park World.app`, released as a DMG, a zip and `install.sh` | `Star Trek Legacy.app` builds locally (`app/build-app.sh`); never released |
+| Updates | Sparkle, signed feed (`appcast.xml`), key in `app/sparkle-public-key.txt` | Sparkle linked, no key, no feed |
+| Releases | `.github/workflows/release.yml` + `app/release.sh` on a `v*` tag | no `.github/` at all |
+| pcrecomp pin | `app/pcrecomp.lock`: one commit on the fork with the pending merges | `app/pcrecomp.lock`: the fork's `stl-lock` (done 2026-11-08) |
+| Upstream | six PRs open on sp00nznet/pcrecomp (#158–#164) | seven branches on the fork, no PRs opened |
+| Linux | Flatpak (x86-64, arm64), `app/linux/launcher.c`, CI, published via cpressland/flatpak | macOS only; the D3D9 backend is Metal-only |
+| First-run build | ~10 minutes, 3 GB | ~1 hour, 12 GB (d3dx9's disassembly alone is ~20 minutes) |
+| Movies in the app | n/a (TPW's are Smacker, in win32hle) | **skipped**: Bink goes through ffmpeg, found by pkg-config, and the app's toolchain doesn't carry it |
+| Resolution | `--resolution WxH\|native\|options`, remembered; first launch is native | the game's Video options only, from a fixed list capped at 1920x1080 (`d3d9.c` `modes()`); the Mac's own size is never offered |
+| Presenting | Metal straight to the window (`d3d_metal.m`) | Metal renders, then the frame is **read back to the CPU** and shown through the GDI window surface every frame |
+| Mouse options | `--free-mouse` | none (relative mode always on while focused) |
+| Screenshots | `--shot`, `--shot-after`, `--shot-every` | env vars only (`STL_SHOT`, `STL_SHOT_EVERY`) |
+| Bring-up tracing | `src/host/trace.c` (`-DTPW_TRACE=ON`: first-hit, ring, argument traces) | `--trace` (imports only) |
+| Linux file names | install.py and the host find files by any case | assumes macOS's case-insensitive disk |
+
+## What doesn't carry over
+
+- TPW's widescreen work (HUD anchoring, 4:3 movies, lift patches) exists
+  because TPW is a 4:3 game. Star Trek: Legacy supports widescreen itself;
+  it only needs the modes offered (below).
+- QMixer, SafeDisc and RTPatch are TPW's own problems.
+
+## Tasks, in order
+
+1. ~~**Pin pcrecomp and push it.**~~ Done: `app/pcrecomp.lock` pins the
+   fork's `stl-lock`, which also takes tpw-local's newer win32hle (its
+   relative mouse replaced this project's own `win32hle-raw-mouse`).
+2. **Movies in the app.** Carry ffmpeg's decoding libraries
+   (libavcodec, libavformat, libavutil, libswresample, libswscale; Bink and
+   its audio only) in `app/toolchain.sh`, pinned by checksum like SDL, and
+   build with `HLE_WITH_FFMPEG` from them. Without this, the released app
+   has no intro or mission cinematics.
+3. **Release pipeline.** Port `release.yml`, `app/release.sh` and
+   `app/install.sh`; make a Sparkle key pair. *Needs you:* add the
+   `SPARKLE_PRIVATE_KEY` secret to the repo and commit the public half. Then
+   tag `v0.1.0`.
+4. **Cut the first-run build time.** The hour is mostly d3dx9: its
+   disassembly (~20 min), lift and compile. Options, cheapest first:
+   - cache the disassembly (pcrecomp's decode cache);
+   - lift only the d3dx9 functions the game reaches (it uses the effect
+     compiler, texture loading and maths: a fraction of 14,500 functions);
+   - prebuild nothing from the game, but parallelise analysis and compile
+     harder.
+   The app says "about an hour"; TPW's says ten minutes.
+5. **Present without the readback.** Draw the back buffer into the SDL
+   window's `CAMetalLayer` directly (as `d3d_metal.m` does for TPW) instead
+   of reading every frame back to the CPU. Better frame rate and latency at
+   high resolutions, and Retina-sharp output.
+6. **Resolutions.** Offer the Mac's real display modes, its native size and
+   the common widescreen sizes, not a fixed list capped at 1920x1080. Add
+   `--resolution WxH|native` (written into the game's own settings), and
+   make the app's first launch native, as TPW's does.
+7. **Small parity options.** `--free-mouse`; `--shot`, `--shot-after` and
+   `--shot-every` as arguments; a `README` section on playing (keys, F11,
+   Ctrl+Cmd).
+8. **Test more of the game.** Smoke runs that start each campaign mission
+   and the skirmish and multiplayer setup screens, checking for faults and
+   that the mission script loads. Do this before the first release so it
+   catches regressions in the 38 mission scripts.
+9. **Open the upstream PRs** on sp00nznet/pcrecomp for the fork branches
+   in the README's table (and tpw-local's relative mouse, which has no PR
+   yet), as TPW did, so the lock can eventually be plain `main`.
+10. **Linux.** The largest item: a D3D9 backend that isn't Metal (Vulkan, or
+    OpenGL 3.3 to start), file lookup by any case, then TPW's Flatpak, its
+    launcher and CI. Worth doing after the Mac release is solid.
+11. **Controller.** The game ships `xinput9_1_0.dll` and supports an Xbox
+    360 pad. Answering XInput from SDL's game controllers would give
+    controller play on Mac (and the Steam Deck, after Linux).
+12. **Bring-up tracing.** Port TPW's `trace.c` for the next hard bug. It's
+    only needed when one turns up.

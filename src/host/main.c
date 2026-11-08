@@ -180,10 +180,10 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
     }
 
     if (chdir(game_full) != 0) { fprintf(stderr, "cannot enter %s\n", game_full); return 1; }
-    /* The game draws its own cursor and turns the camera by DirectInput's
-     * relative axes: the window holds the mouse as relative motion, so the
-     * camera keeps turning past the window's edge, as on Windows. */
-    hle_screen_relative(1);
+    /* The game takes its mouse non-exclusively, draws its own cursor and
+     * turns the camera by DirectInput's relative axes: give it the mouse's
+     * movement, past the window's edge, as Windows does. */
+    hle_dinput_relative_shared(1);
     if (hle_screen_open(STL_TITLE, !g_windowed, g_headless) != 0) return 1;
     /* The game pumps its window's messages on a thread of its own, and
      * AppKit takes events on the main thread only: SDL is pumped there (at

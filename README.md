@@ -82,7 +82,7 @@ import slot finds the other module's lifted function once the host binds it:
 .venv/bin/python -I tools/install/install.py --dest DIR     # after the game folder: analyse and lift
 ```
 
-or by hand, with pcrecomp's `stl-local` branch beside this repository
+or by hand, with pcrecomp at `app/pcrecomp.lock`'s commit beside this repository
 (below):
 
 ```
@@ -154,40 +154,36 @@ checked by `tools/dxso`); `cpu.c` the CPU it reports (a Pentium III);
 
 ## pcrecomp: pending merges
 
-As tpw-recomp, this builds against pcrecomp's `main` plus branches still in
-review, merged into a local `stl-local`:
+This builds against pcrecomp's `main` plus branches still in review, merged
+into one commit that `app/pcrecomp.lock` pins: the `stl-lock` branch of
+[cpressland/pcrecomp](https://github.com/cpressland/pcrecomp). Clone it
+beside this repository at that commit:
+
+```
+git clone https://github.com/cpressland/pcrecomp ../pcrecomp
+git -C ../pcrecomp checkout "$(sed -n 's/^ref=//p' app/pcrecomp.lock)"
+```
+
+What `stl-lock` adds to `main`:
 
 | Branch | What | Needed? |
 |---|---|---|
 | `win32hle-eh32` | guest C++ exceptions on win32hle | **Yes**: the engine and its runtime throw |
 | `lift-eh32-eh-prolog` | landing pads for frames opened through `__EH_prolog` | **Yes**: msvcp71's catches |
-| `win32hle-dinput8` | DirectInput 8, on `win32hle-dinput` | **Yes**: the game's mouse |
+| `win32hle-dinput8` | DirectInput 8, on `win32hle-dinput` | **Yes**: the game's mouse and keyboard |
 | `win32hle-dx9-system-dlls` | `d3d9`, `dinput8` and XInput load as system DLLs | **Yes**: the game loads `d3d9.dll` at run time |
 | `win32hle-dsound3d` | DirectSound 3D, on `win32hle-dsound-cursor` | **Yes**: the game places every sound |
-| `win32hle-warp-picture-size` | SetCursorPos puts the pointer by the picture's size, on `win32hle-mouse-confine` | **Yes**: the power distribution wheel (E) centres the cursor |
-| `win32hle-raw-mouse` | DirectInput's relative axes count the mouse's own movement; `hle_screen_relative`, on `win32hle-warp-picture-size` and `win32hle-dinput8` | **Yes**: the camera turns past the window's edge |
-| tpw-recomp's (`win32hle-dinput`, `-gdi-lfwidth`, `-mouse-confine`, `-dsound-cursor`, `-metal`) | DirectInput, Metal and the rest | for the host, Phase 3 on |
+| `win32hle-warp-picture-size` | SetCursorPos puts the pointer by the picture's size | **Yes**: the power distribution wheel (E) centres the cursor |
+| `win32hle-dinput-relative-shared` | a host can give a non-exclusive DirectInput mouse movement alone (`hle_dinput_relative_shared`), on `tpw-local` | **Yes**: the camera turns past the window's edge |
+| `tpw-local` | tpw-recomp's: DirectInput, Metal, the mouse held in the picture and its movement past the edge (`hle_input_raw`), the DirectSound cursor | **Yes**: the host's window, mouse and sound |
 
-All of them are on [cpressland/pcrecomp](https://github.com/cpressland/pcrecomp):
-
-```
-cd ../pcrecomp
-git remote add cpressland https://github.com/cpressland/pcrecomp
-git fetch origin && git fetch cpressland
-git switch -c stl-local origin/main
-git merge --no-edit cpressland/win32hle-dinput cpressland/win32hle-gdi-lfwidth cpressland/win32hle-mouse-confine cpressland/win32hle-dsound-cursor
-git merge --no-edit cpressland/win32hle-metal    # screen.c: keep both present(0) and confine_update(); README: both rows
-git add runtime/win32hle/README.md runtime/win32hle/screen.c && git commit --no-edit
-git merge --no-edit cpressland/win32hle-eh32     # README: keep both rows
-git add runtime/win32hle/README.md && git commit --no-edit
-git merge --no-edit cpressland/lift-eh32-eh-prolog
-git merge --no-edit cpressland/win32hle-dinput8 cpressland/win32hle-dx9-system-dlls cpressland/win32hle-dsound3d
-git merge --no-edit cpressland/win32hle-warp-picture-size
-git merge --no-edit cpressland/win32hle-raw-mouse   # screen.c: keep warp()'s g_rel_on line
-git add runtime/win32hle/screen.c && git commit --no-edit
-```
-
-When a branch is merged upstream, drop it from this list (and the table).
+To make a new lock (after one of these changes, or `main` moves), merge
+them again onto `origin/main` in that order, push the result to the fork's
+`stl-lock`, and put its commit in `app/pcrecomp.lock`. The merges conflict
+in three places, each kept both ways: `runtime/win32hle/README.md` (both
+rows), `dinput.c`'s device fields (`exclusive` and `v8`), and `screen.c`'s
+`warp()` (the picture's size, and no warp while relative). When a branch
+is merged upstream, drop it from this table.
 
 ## License
 
