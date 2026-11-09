@@ -129,20 +129,65 @@ static void *watchdog(void *arg) {
     return NULL;
 }
 
+/* ---- the display mode ------------------------------------------------------
+ * The game keeps its mode in its profile (Admiral.PRF), and has none before
+ * the first time its Video options are saved: then 1024x768. The host keeps
+ * one of its own, User/resolution.txt ("WxH", or "native": the desktop's),
+ * and the game's first device of a run is made at that size (d3d9.c), which
+ * the game takes as its mode, Video options and all. --resolution sets it,
+ * --resolution options forgets it (the game's own again), and a mode chosen
+ * in the game's Video options is kept there too (stl_mode_used). */
+static char g_mode_file[PATH_MAX + 32];
+static void mode_write(const char *v) {
+    if (!g_mode_file[0]) return;
+    if (!v) { unlink(g_mode_file); return; }
+    FILE *f = fopen(g_mode_file, "w");
+    if (f) fprintf(f, "%s\n", v), fclose(f);
+}
+static int mode_valid(const char *v) {
+    unsigned w, h;
+    return v && (!strcmp(v, "native") || (sscanf(v, "%ux%u", &w, &h) == 2 && w >= 640 && h >= 480 && w <= 7680 && h <= 4320));
+}
+int stl_mode(uint32_t *w, uint32_t *h) {
+    char v[64] = { 0 };
+    FILE *f = g_mode_file[0] ? fopen(g_mode_file, "r") : NULL;
+    if (!f) return 0;
+    if (!fgets(v, sizeof v, f)) v[0] = 0;
+    fclose(f);
+    v[strcspn(v, "\r\n")] = 0;
+    if (!mode_valid(v)) return 0;
+    int dw = 0, dh = 0;
+    if (!strcmp(v, "native")) {
+        if (!hle_screen_desktop(&dw, &dh) || dw < 640 || dh < 480) return 0;   /* headless: the game's own */
+        *w = (uint32_t)dw, *h = (uint32_t)dh;
+        return 1;
+    }
+    unsigned uw, uh;
+    sscanf(v, "%ux%u", &uw, &uh);
+    *w = uw, *h = uh;
+    return 1;
+}
+void stl_mode_used(uint32_t w, uint32_t h) {
+    char v[32];
+    snprintf(v, sizeof v, "%ux%u", w, h);
+    mode_write(v);
+}
+
 static void usage(void) {
     printf("usage: stl [--run] [--game DIR] [--headless] [--windowed] [--mute] [--watchdog S] [--trace] [--verbose]\n"
            "  --run        enter the game (without it: map, bind and say what is missing)\n"
            "  --game DIR   the game folder (default: game)\n"
            "  --headless   no window, no sound device\n"
+           "  --resolution WxH|native|options   the display mode, kept for later runs (options: the game's own)\n"
            "  --watchdog S stop after S seconds, saying where the game was\n"
            "  --trace      every import call, as it is made\n"
            "  --verbose    every stub as it is bound, every Direct3D 9 call\n"
-           "  --move x,y@s --click x,y@s --rclick x,y@s --key vk@s --keydown vk@s --keyup vk@s --rel dx,dy@s   input, s seconds after the start\n");
+           "  --move x,y@s --click x,y@s --rclick x,y@s --key vk@s --keydown vk@s --keyup vk@s --rel dx,dy@s --quit @s   input, s seconds after the start\n");
 }
 
 /* The program's main (exe.c), and the app's way in. */
 __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
-    const char *game = "game";
+    const char *game = "game", *resolution = NULL;
     int run = 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
@@ -151,6 +196,13 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = 1;
         else if (!strcmp(argv[i], "--windowed")) g_windowed = 1;
+        else if (!strcmp(argv[i], "--resolution") && i + 1 < argc) {
+            resolution = argv[++i];
+            if (strcmp(resolution, "options") && !mode_valid(resolution)) {
+                fprintf(stderr, "--resolution: WxH (640x480 up), native or options, not %s\n", resolution);
+                return 1;
+            }
+        }
         else if (!strcmp(argv[i], "--game") && i + 1 < argc) game = argv[++i];
         else if (!strcmp(argv[i], "--mute")) hle_dsound_set_master(0.0f);
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) g_watchdog_s = (unsigned)strtoul(argv[++i], NULL, 0);
@@ -188,6 +240,8 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
         snprintf(user, sizeof user, "%.*s/User", slash ? (int)(slash - game_full) : 1, game_full);
         mkdir(user, 0755);
         stl_set_user_root(user);
+        snprintf(g_mode_file, sizeof g_mode_file, "%s/resolution.txt", user);
+        if (resolution) mode_write(strcmp(resolution, "options") ? resolution : NULL);
     }
     printf(STL_TITLE " recomp host\n  lifted functions in dispatch: %u\n", recomp_dispatch_count);
 

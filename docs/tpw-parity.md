@@ -18,7 +18,7 @@ stl-recomp lacks by comparison, and the order to close it in.
 | Linux | Flatpak (x86-64, arm64), `app/linux/launcher.c`, CI, published via cpressland/flatpak | macOS only; the D3D9 backend is Metal-only |
 | First-run build | ~10 minutes, 3 GB | ~12 minutes, 8 GB at its peak (was ~1 hour; done 2026-11-08) |
 | Movies in the app | n/a (TPW's are Smacker, in win32hle) | play: the app carries a static Bink-only ffmpeg (`app/toolchain.sh`; done 2026-11-08) |
-| Resolution | `--resolution WxH\|native\|options`, remembered; first launch is native | the game's Video options only, from a fixed list capped at 1920x1080 (`d3d9.c` `modes()`); the Mac's own size is never offered |
+| Resolution | `--resolution WxH\|native\|options`, remembered; first launch is native | `--resolution WxH\|native\|options`, kept in `User/resolution.txt`; the app's first launch is native (2026-11-09) |
 | Presenting | Metal, each flip's frame copied down without waiting (a ring of three), shown by screen.c | the same, since 2026-11-08 (it waited for the GPU each frame before: 40% of the headless frame rate) |
 | Mouse options | `--free-mouse` | none (relative mode always on while focused) |
 | Screenshots | `--shot`, `--shot-after`, `--shot-every` | env vars only (`STL_SHOT`, `STL_SHOT_EVERY`) |
@@ -63,10 +63,14 @@ stl-recomp lacks by comparison, and the order to close it in.
    34,200 in the same 150-second windowed run. A `CAMetalLayer` of the
    game's own would save the last copy too, but would take screen.c's
    scaling, menus and mouse mapping with it: not worth it now.
-6. **Resolutions.** Offer the Mac's real display modes, its native size and
-   the common widescreen sizes, not a fixed list capped at 1920x1080. Add
-   `--resolution WxH|native` (written into the game's own settings), and
-   make the app's first launch native, as TPW's does.
+6. ~~**Resolutions.**~~ Done. The game sizes its first device from its
+   profile (`Admiral.PRF`, written when Video options are saved) or 1024x768,
+   and takes whatever size that device is made at as its own, layout,
+   projection and Video page included. So the host keeps a mode
+   (`User/resolution.txt`: `--resolution`, or the last one chosen in the
+   game) and makes the first device at it. D3D9 reports the Mac's desktop as
+   the display mode. The game's Video dropdown is its own nine sizes
+   (`ui/graphicsSettings.xml`); other sizes come from `--resolution`.
 7. **Small parity options.** `--free-mouse`; `--shot`, `--shot-after` and
    `--shot-every` as arguments; a `README` section on playing (keys, F11,
    Ctrl+Cmd).

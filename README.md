@@ -107,6 +107,13 @@ DIR/build/host/stl --game DIR/game --run --windowed      # or full screen withou
 
 F11 toggles full screen, F12 the scaling, Ctrl+Cmd lets go of the mouse.
 
+`--resolution WxH` picks the display mode (any size from 640x480, widescreen
+and ultrawide included), `native` the Mac's own (its desktop size), and
+`options` leaves it to the game's Video options. It is kept for later runs
+in `User/resolution.txt`, and so is a mode chosen in the game's Video
+options, whose list is the game's own nine (800x600 to 1920x1200). The app
+starts the game at `native` the first time.
+
 **Star Trek Legacy.app** does all of it: `app/build-app.sh` makes
 `build-app/Star Trek Legacy.app`, which downloads the two files (or takes
 your own), builds the game into `~/Library/Application Support/Star Trek

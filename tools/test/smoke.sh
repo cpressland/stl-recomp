@@ -12,7 +12,7 @@ set -u
 STL=${1:?the stl program}; GAME=${2:?the game folder}; OUT=${3:-work/smoke}
 rm -rf "$OUT" && mkdir -p "$OUT/shots"
 OUT=$(cd "$OUT" && pwd)                 # the game runs in its own folder: absolute paths
-STL_SHOT="$OUT/shots" STL_SHOT_EVERY=2000 "$STL" --game "$GAME" --run --headless --mute --watchdog 230 \
+STL_SHOT="$OUT/shots" STL_SHOT_EVERY=2000 "$STL" --game "$GAME" --run --headless --mute --resolution 1024x768 --watchdog 230 \
     --click 512,408@75 --click 512,393@95 --key 32@125 \
     --key 0xBB@140 --key 0xBB@141 --key 0xBB@142 --key 0xBB@143 > "$OUT/run.log" 2>&1
 code=$?

@@ -214,8 +214,17 @@ static void caps(uint32_t c) {
 }
 
 static int g_modes[HLE_DD_MAX_MODES][2], g_nmodes;
+/* The modes offered: win32hle's table (640x480 to 3840x2160, widescreen and
+ * ultrawide), with this Mac's desktop size in its place. */
+static int desktop(int *w, int *h) {
+    if (hle_screen_desktop(w, h) && *w >= 640 && *h >= 480) return 1;
+    *w = 1920, *h = 1080;                                /* headless */
+    return 0;
+}
 static void modes(void) {
-    if (!g_nmodes) g_nmodes = hle_dd_modes(1920, 1080, g_modes);
+    int w, h;
+    desktop(&w, &h);
+    if (!g_nmodes) g_nmodes = hle_dd_modes(w, h, g_modes);
 }
 
 static void d_GetAdapterCount(void) { count(); RET(1, 1); }
@@ -251,7 +260,9 @@ static void d_EnumAdapterModes(void) {       /* (adapter, format, mode, D3DDISPL
 }
 static void d_GetAdapterDisplayMode(void) {  /* (adapter, D3DDISPLAYMODE*) */
     count();
-    put_mode(A32(2), 1920, 1080, 22);
+    int w, h;
+    desktop(&w, &h);
+    put_mode(A32(2), (uint32_t)w, (uint32_t)h, 22);
     RET(D3D_OK, 3);
 }
 static void d_CheckDeviceType(void) {        /* (adapter, type, displayFmt, backFmt, windowed) */
@@ -357,6 +368,13 @@ static void d_CreateDevice(void) {
     memcpy(d->params, hle_ptr(pp), sizeof d->params);
     /* A zero size is the window's (here: the display's). */
     if (!d->params[0] || !d->params[1]) d->params[0] = 1920, d->params[1] = 1080;
+    /* The mode the host keeps (--resolution, or the last chosen): the game
+     * takes the size it is given back as its own (main.c, stl_mode). */
+    uint32_t mw, mh;
+    if (stl_mode(&mw, &mh) && (mw != d->params[0] || mh != d->params[1])) {
+        fprintf(stderr, "[d3d9] the game asked for %ux%u: %ux%u, the mode kept\n", d->params[0], d->params[1], mw, mh);
+        d->params[0] = mw, d->params[1] = mh;
+    }
     if (!d->params[2]) d->params[2] = 22;                     /* D3DFMT_UNKNOWN: the display's */
     memcpy(hle_ptr(pp), d->params, 12);
     fprintf(stderr, "[d3d9] CreateDevice: %ux%u, format %u, %s, behaviour 0x%X\n", d->params[0], d->params[1],
@@ -429,6 +447,7 @@ static void v_GetNumberOfSwapChains(void) { count(); RET(1, 1); }
 static void v_Reset(void) {
     count();
     dev_t_ *d = DEV(A32(0));
+    uint32_t was_w = d->params[0], was_h = d->params[1];
     memcpy(d->params, hle_ptr(A32(1)), sizeof d->params);
     if (!d->params[0] || !d->params[1]) d->params[0] = 1920, d->params[1] = 1080;
     res_t *bb = OBJ(d->backbuffer, res_t);
@@ -438,6 +457,7 @@ static void v_Reset(void) {
     defaults(d);
     gpu_device(d);
     display_mode(d);
+    if (d->params[0] != was_w || d->params[1] != was_h) stl_mode_used(d->params[0], d->params[1]);   /* chosen in the game */
     fprintf(stderr, "[d3d9] Reset: %ux%u\n", d->params[0], d->params[1]);
     RET(D3D_OK, 2);
 }

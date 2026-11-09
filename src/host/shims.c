@@ -74,6 +74,10 @@ static void k_FreeLibrary(void) {
 }
 
 static void k_DisableThreadLibraryCalls(void) { RET(1, 1); }
+/* (class name, instance): the game unregisters its window class as it
+ * quits. win32hle keeps classes for the process's life; there is nothing to
+ * undo, and Windows says yes. */
+static void u_UnregisterClassA(void)          { RET(1, 2); }
 static void k_IsDBCSLeadByte(void)            { RET(0, 1); }   /* Windows-1252: no lead bytes */
 static void k_IsDBCSLeadByteEx(void)          { RET(0, 2); }
 static void k_GetConsoleCP(void)              { RET(1252, 0); }
@@ -224,7 +228,7 @@ static void ws2_WSACleanup(void)    { stl_call_a("WSACleanup"); }
 const win32hle_shim stl_shims[] = {
     { "MessageBoxA", s_MessageBoxA },
     { "LoadLibraryA", k_LoadLibraryA }, { "GetProcAddress", k_GetProcAddress }, { "FreeLibrary", k_FreeLibrary },
-    { "DisableThreadLibraryCalls", k_DisableThreadLibraryCalls },
+    { "DisableThreadLibraryCalls", k_DisableThreadLibraryCalls }, { "UnregisterClassA", u_UnregisterClassA },
     { "IsDBCSLeadByte", k_IsDBCSLeadByte }, { "IsDBCSLeadByteEx", k_IsDBCSLeadByteEx },
     { "GetConsoleCP", k_GetConsoleCP }, { "GetConsoleOutputCP", k_GetConsoleCP },
     { "HeapCompact", k_HeapCompact }, { "Beep", k_Beep }, { "SetLocalTime", k_SetLocalTime },

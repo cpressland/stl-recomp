@@ -35,6 +35,8 @@ uint32_t stl_load_library(const char *name);   /* a lifted module the game loads
 int  stl_free_library(uint32_t base);          /* 1 if base was one (and it is freed) */
 
 void stl_cpuid(void);
+int  stl_mode(uint32_t *w, uint32_t *h);                            /* main.c: the display mode kept, if any */
+void stl_mode_used(uint32_t w, uint32_t h);                         /* ...the game chose this one */
 void stl_pump(void);                                                /* main.c: SDL's events, on the main thread */                                               /* cpu.c */
 
 extern const win32hle_shim stl_shims[];                             /* shims.c */

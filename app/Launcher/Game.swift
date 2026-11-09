@@ -25,8 +25,13 @@ enum Game {
         typealias Main = @convention(c) (Int32, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32
         let main = unsafeBitCast(sym, to: Main.self)
         // The game folder and --run, then what the app was given, less Finder's
-        // process serial number.
+        // process serial number. The first time, the desktop's own size: after
+        // that the host remembers whatever was chosen (User/resolution.txt).
         var args = [CommandLine.arguments[0], "--game", Paths.game.path, "--run"]
+        if !Paths.exists(Paths.firstLaunch) {
+            args += ["--resolution", "native"]
+            FileManager.default.createFile(atPath: Paths.firstLaunch.path, contents: nil)
+        }
         args += CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-psn_") && $0 != "--setup" }
         var argv = args.map { strdup($0) } + [nil]
         return main(Int32(args.count), &argv)

@@ -29,7 +29,7 @@
 #define WM_RBUTTONDOWN 0x0204u
 #define WM_RBUTTONUP   0x0205u
 
-typedef struct { char kind; int x, y; double t; } ev_t;   /* m move, c click, r right click, k key, d/u key down/up, v relative move */
+typedef struct { char kind; int x, y; double t; } ev_t;   /* m move, c click, r right click, k key, d/u key down/up, v relative move, q quit */
 #define MAX_EV 256
 static ev_t g_ev[MAX_EV];
 static int g_nev;
@@ -46,8 +46,11 @@ int script_arg(int argc, char **argv, int i) {
     else if (!strcmp(argv[i], "--keydown")) e.kind = 'd';
     else if (!strcmp(argv[i], "--keyup")) e.kind = 'u';
     else if (!strcmp(argv[i], "--rel")) e.kind = 'v';
+    else if (!strcmp(argv[i], "--quit")) e.kind = 'q';
     else return 0;
-    if (e.kind == 'k' || e.kind == 'd' || e.kind == 'u') {
+    if (e.kind == 'q') {                        /* --quit @s (or s): the window closed, as its close button does */
+        e.t = atof(a[0] == '@' ? a + 1 : a);
+    } else if (e.kind == 'k' || e.kind == 'd' || e.kind == 'u') {
         char *at = strchr(a, '@');
         if (!at) return 0;
         e.x = (int)strtol(a, NULL, 0);
@@ -119,6 +122,14 @@ static void *run(void *arg) {
             key(0, (uint32_t)e->x);
             fprintf(stderr, "[input] %.1fs key %d\n", e->t, e->x);
             break;
+        case 'q': {
+            mach_enter();
+            uint32_t h = hle_first_hwnd();
+            if (h) hle_post_message(h, 0x0010u, 0, 0);   /* WM_CLOSE */
+            mach_leave();
+            fprintf(stderr, "[input] %.1fs quit (WM_CLOSE)\n", e->t);
+            break;
+        }
         case 'v':                               /* the mouse moved by x,y: past the screen's edge too */
             mach_enter(); hle_input_motion(e->x, e->y); mach_leave();
             fprintf(stderr, "[input] %.1fs rel %d,%d\n", e->t, e->x, e->y);
