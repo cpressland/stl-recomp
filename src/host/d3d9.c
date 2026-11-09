@@ -965,14 +965,22 @@ static void t_GetLevelDesc(void) {   /* (level, desc) */
     put_desc(A32(2), r, A32(1), R_SURFACE);
     RET(D3D_OK, 3);
 }
+/* A level's (and face's) surface: one object, made the first time it is
+ * asked for and handed out again after, as D3D9 does. Made anew each time,
+ * GetSurfaceLevel (280 a second in a mission) leaked 10 MB a minute. The
+ * texture keeps a reference; each caller gets one of its own. */
 static uint32_t level_surface(uint32_t tex, uint32_t level, uint32_t face) {
     res_t *t = RES(tex), *s;
+    uint32_t *slot = &t->surf[(face * 16 + level) % 96];
+    if (*slot) { addref(*slot); return *slot; }
     uint32_t o = make(g_vt_surf, sizeof(res_t), (void **)&s);
     s->kind = R_SURFACE, s->device = t->device;
     s->width = level_dim(t->width, level), s->height = level_dim(t->height, level), s->depth = s->levels = 1;
     s->format = t->format, s->usage = t->usage, s->pool = t->pool;
     s->parent = tex, s->level = level, s->face = face;
     addref(tex);
+    *slot = o;
+    addref(o);                                           /* the texture's own */
     return o;
 }
 static void t_GetSurfaceLevel(void) {   /* (level, &surface) */

@@ -26,12 +26,14 @@ typedef struct {
     uint32_t fvf;             /* a vertex buffer's; an index buffer's format is `format` */
     uint32_t mem[16 * 6];     /* each level's (and face's) bytes, made on first lock */
     uint32_t parent, level, face;     /* a surface of a texture */
+    uint32_t surf[16 * 6];    /* a texture's: the surface of each level (and face), made once (level_surface) */
     uint32_t multisample;
     /* the GPU's */
     void *gpu;                /* id<MTLTexture> (a surface of a texture: its parent's) or id<MTLBuffer> */
     uint32_t dirty[6];        /* levels (bits) of each face written since they went up */
     uint64_t gpu_frame;       /* a dynamic buffer: the frame its copy is from */
     uint32_t gpu_offset;      /* ...and where in that frame's ring */
+    void *gpu_ring;           /* ...which buffer: the ring, or one it went on in (not retained: the frame keeps it) */
 } res_t;
 
 typedef struct {

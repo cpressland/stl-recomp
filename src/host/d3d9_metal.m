@@ -27,11 +27,18 @@
 
 #include "win32hle.h"
 #include "stl.h"
+#include <pthread.h>
 #include <stdatomic.h>
 
 #include "d3d9_int.h"
 
-#define RING_SIZE (64u << 20)
+/* Each frame's ring of dynamic data: 64 MB (STL_RING_MB for a test). */
+static uint32_t ring_size(void) {
+    static uint32_t n;
+    if (!n) { const char *e = getenv("STL_RING_MB"); n = (e && atoi(e) > 0 ? (uint32_t)atoi(e) : 64u) << 20; }
+    return n;
+}
+#define RING_SIZE ring_size()
 #define FRAMES 3
 
 @interface STLGpu : NSObject {
@@ -44,6 +51,9 @@
     int pass_w, pass_h;
     id<MTLBuffer> ring[FRAMES];
     uint32_t ring_used;
+    id<MTLBuffer> over;                        /* this frame's ring was full: where it goes on */
+    uint32_t over_used;
+    NSMutableArray<id<MTLBuffer>> *extras;     /* ...every such buffer, kept until the GPU is done with the frame */
     int ring_i;
     dispatch_semaphore_t inflight;
     uint64_t frame, gen;                       /* gen: the ring restarted (a frame, or full) */
@@ -229,20 +239,32 @@ static void flush_wait(void) {
     if (G->cmd) { [G->cmd commit]; [G->cmd waitUntilCompleted]; G->cmd = nil; }
 }
 
-/* n bytes in this frame's ring (16-byte aligned); its offset. */
+/* n bytes of this frame's (256-byte aligned): the buffer, and the offset.
+ *
+ * A frame that fills its ring goes on in a buffer of its own, kept until the
+ * GPU has done with the frame (gpu_present). It used to submit the frame so
+ * far and start the ring again, which ended the render encoder a draw was in
+ * the middle of: the next call on it crashed (a heavy scene, ten minutes in). */
 static uint32_t ring_alloc(uint32_t n, id<MTLBuffer> *buf) {
     n = (n + 255) & ~255u;
-    if (G->ring_used + n > RING_SIZE) {
-        /* full: everything so far goes, and the ring starts again */
-        flush_wait();
-        G->ring_used = 0;
-        G->gen++;
-        if (n > RING_SIZE) { *buf = nil; return 0; }
+    uint32_t at;
+    if (!G->over && G->ring_used + n <= RING_SIZE) {
+        at = G->ring_used, G->ring_used += n, *buf = G->ring[G->ring_i];
+        return at;
     }
-    uint32_t at = G->ring_used;
-    G->ring_used += n;
-    *buf = G->ring[G->ring_i];
-    return at;
+    if (G->over && G->over_used + n <= G->over.length) {
+        at = G->over_used, G->over_used += n, *buf = G->over;
+        return at;
+    }
+    NSUInteger len = n > RING_SIZE ? n : RING_SIZE;
+    id<MTLBuffer> b = [G->dev newBufferWithLength:len options:MTLResourceStorageModeShared];
+    if (!b) { *buf = nil; return 0; }
+    static int said;
+    if (!said++) fprintf(stderr, "[metal] a frame needed more than its %u MB ring: it goes on in another\n", RING_SIZE >> 20);
+    if (!G->extras) G->extras = [NSMutableArray new];
+    [G->extras addObject:b];
+    G->over = b, G->over_used = n, *buf = b;
+    return 0;
 }
 static uint32_t ring_copy(const void *src, uint32_t n, id<MTLBuffer> *buf) {
     uint32_t at = ring_alloc(n, buf);
@@ -264,13 +286,14 @@ static id<MTLBuffer> buffer_of(res_t *r, uint32_t *offset) {
         return b;
     }
     id<MTLBuffer> b;                                        /* dynamic: copied into the ring when it changed */
-    if (r->dirty[0] || r->gpu_frame != G->gen + 1) {
+    if (r->dirty[0] || r->gpu_frame != G->gen + 1 || !r->gpu_ring) {
         r->gpu_offset = ring_copy(hle_ptr(r->mem[0]), r->size, &b);
+        r->gpu_ring = (__bridge void *)b;                   /* this frame's: the ring, or a buffer it went on in */
         r->gpu_frame = G->gen + 1;
         r->dirty[0] = 0;
     }
     *offset = r->gpu_offset;
-    return G->ring[G->ring_i];
+    return (__bridge id<MTLBuffer>)r->gpu_ring;
 }
 
 /* ---- the device -------------------------------------------------------------- */
@@ -1091,13 +1114,27 @@ static void window_show(void) {
     hle_gdi_window_touched();
 }
 
+/* Autoreleased objects (command buffers, encoders, descriptors) are let go
+ * once a frame: the game's thread runs no run loop to drain a pool, and
+ * without one every frame's command buffer, and all it held, stayed. */
+void *objc_autoreleasePoolPush(void);
+void objc_autoreleasePoolPop(void *pool);
+static void *g_pool;
+static pthread_t g_pool_thread;
+static void frame_pool(void) {
+    if (g_pool && pthread_equal(g_pool_thread, pthread_self())) objc_autoreleasePoolPop(g_pool);
+    g_pool = objc_autoreleasePoolPush(), g_pool_thread = pthread_self();
+}
+
 void gpu_present(dev_t_ *d) {
     if (!G) return;
     end_encoder();
     id<MTLCommandBuffer> c = command();
     if (!stl_headless) window_copy(d, c);
     dispatch_semaphore_t sem = G->inflight;
-    [c addCompletedHandler:^(id<MTLCommandBuffer> b) { (void)b; dispatch_semaphore_signal(sem); }];
+    NSArray *keep = G->extras;                          /* the frame's overflow buffers: until the GPU is done */
+    [c addCompletedHandler:^(id<MTLCommandBuffer> b) { (void)b; (void)keep; dispatch_semaphore_signal(sem); }];
+    G->extras = nil, G->over = nil, G->over_used = 0;
     [c commit];
     G->cmd = nil;
     dispatch_semaphore_wait(G->inflight, DISPATCH_TIME_FOREVER);
@@ -1105,4 +1142,5 @@ void gpu_present(dev_t_ *d) {
     G->frame++;
     G->ring_i = (G->ring_i + 1) % FRAMES, G->ring_used = 0;
     G->gen++;
+    frame_pool();
 }
