@@ -474,8 +474,12 @@ static void shots(dev_t_ *d) {
         every = e ? strtoull(e, NULL, 0) : 300;
         if (dir) mkdir(dir, 0755);
     }
-    if (!dir || !every || g_frames % every) return;
     char path[4096];
+    if (stl_shot_take(path, sizeof path)) {             /* --shot */
+        if (gpu_shot(d, path) == 0) fprintf(stderr, "[d3d9] shot %s\n", path);
+        else fprintf(stderr, "[d3d9] shot %s: could not write it\n", path);
+    }
+    if (!dir || !every || g_frames % every) return;
     snprintf(path, sizeof path, "%s/frame_%06llu.bmp", dir, (unsigned long long)g_frames);
     if (gpu_shot(d, path) == 0) fprintf(stderr, "[d3d9] shot %s\n", path);
 }

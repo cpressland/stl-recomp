@@ -20,8 +20,8 @@ stl-recomp lacks by comparison, and the order to close it in.
 | Movies in the app | n/a (TPW's are Smacker, in win32hle) | play: the app carries a static Bink-only ffmpeg (`app/toolchain.sh`; done 2026-11-08) |
 | Resolution | `--resolution WxH\|native\|options`, remembered; first launch is native | `--resolution WxH\|native\|options`, kept in `User/resolution.txt`; the app's first launch is native (2026-11-09) |
 | Presenting | Metal, each flip's frame copied down without waiting (a ring of three), shown by screen.c | the same, since 2026-11-08 (it waited for the GPU each frame before: 40% of the headless frame rate) |
-| Mouse options | `--free-mouse` | none (relative mode always on while focused) |
-| Screenshots | `--shot`, `--shot-after`, `--shot-every` | env vars only (`STL_SHOT`, `STL_SHOT_EVERY`) |
+| Mouse options | `--free-mouse` | `--free-mouse` (2026-11-09) |
+| Screenshots | `--shot`, `--shot-after`, `--shot-every` | the same (2026-11-09), and `STL_SHOT` by frames |
 | Bring-up tracing | `src/host/trace.c` (`-DTPW_TRACE=ON`: first-hit, ring, argument traces) | `--trace` (imports only) |
 | Linux file names | install.py and the host find files by any case | assumes macOS's case-insensitive disk |
 
@@ -71,9 +71,9 @@ stl-recomp lacks by comparison, and the order to close it in.
    game) and makes the first device at it. D3D9 reports the Mac's desktop as
    the display mode. The game's Video dropdown is its own nine sizes
    (`ui/graphicsSettings.xml`); other sizes come from `--resolution`.
-7. **Small parity options.** `--free-mouse`; `--shot`, `--shot-after` and
-   `--shot-every` as arguments; a `README` section on playing (keys, F11,
-   Ctrl+Cmd).
+7. ~~**Small parity options.**~~ Done: `--free-mouse`, `--shot FILE.bmp`
+   with `--shot-after` and `--shot-every` (as TPW's), and a Controls section
+   in the README. Found on the way: quitting crashed (fixed with v0.4.0).
 8. **Test more of the game.** Smoke runs that start each campaign mission
    and the skirmish and multiplayer setup screens, checking for faults and
    that the mission script loads. Do this before the first release so it

@@ -105,7 +105,23 @@ including the ones msvcp71 opens through `__EH_prolog`.
 DIR/build/host/stl --game DIR/game --run --windowed      # or full screen without --windowed
 ```
 
-F11 toggles full screen, F12 the scaling, Ctrl+Cmd lets go of the mouse.
+### Controls
+
+The game's own keys and mouse are as on Windows; Options, Game/Controls
+lists and changes them. Around the game, the window has these:
+
+| | |
+|---|---|
+| F11, or Alt+Enter | full screen or a window (the game opens full screen; `--windowed` for a window) |
+| F12 | the scaling, through sharp, smooth, crt, nearest and integer in turn |
+| Ctrl+Cmd | lets go of the mouse; a click in the picture takes it back |
+| the window's close button | quits, as the game's own Exit does |
+
+While the window has the mouse it holds it inside the picture and gives the
+game the mouse's movement, not the pointer's place, so turning the camera
+or the power wheel (E) goes on past the window's edge, as on Windows; the
+game draws its own cursor. `--free-mouse` turns that off: the pointer
+leaves the picture freely, and the camera stops turning at the edge.
 
 `--resolution WxH` picks the display mode (any size from 640x480, widescreen
 and ultrawide included), `native` the Mac's own (its desktop size), and
@@ -137,7 +153,12 @@ Input is `--move x,y@s`, `--click x,y@s`, `--rclick x,y@s`, `--key vk@s`, and
 `--keydown vk@s` / `--keyup vk@s` for a key held (E, 0x45, for the power
 wheel), and `--rel dx,dy@s` for the mouse moved by dx, dy (as in the window,
 where the mouse is held as relative motion: the camera turns past the edge),
-at `s` seconds from the start, in the game's 1024x768.
+at `s` seconds from the start, in the game's 1024x768; `--quit @s` closes the
+window, as its close button does.
+
+`--shot FILE.bmp` saves the screen 10 seconds in (`--shot-after S` for
+another time), and with `--shot-every S` every S seconds after that, as
+`FILE_1.bmp`, `FILE_2.bmp`, and so on.
 
 `tools/test/smoke.sh BUILD/stl GAME` does that and checks it: the intro,
 the menu and the first mission all draw, the ship takes the throttle,

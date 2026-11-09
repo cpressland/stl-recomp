@@ -31,6 +31,42 @@ int stl_verbose;
 int stl_headless;
 #define g_headless stl_headless
 static int g_windowed;
+static int g_free_mouse;                 /* --free-mouse: the pointer may leave the picture */
+
+/* --shot FILE.bmp: the screen (the back buffer, as d3d9.c presents it),
+ * --shot-after S seconds in (default 10), and with --shot-every S again
+ * each S seconds as FILE_1.bmp, FILE_2.bmp, ... A thread asks; the next
+ * Present takes it (stl_shot_take). */
+static const char *g_shot;
+static unsigned g_shot_s = 10, g_shot_every;
+static pthread_mutex_t g_shot_lock = PTHREAD_MUTEX_INITIALIZER;
+static char g_shot_path[PATH_MAX];
+int stl_shot_take(char *out, size_t n) {
+    pthread_mutex_lock(&g_shot_lock);
+    int any = g_shot_path[0] != 0;
+    if (any) snprintf(out, n, "%s", g_shot_path), g_shot_path[0] = 0;
+    pthread_mutex_unlock(&g_shot_lock);
+    return any;
+}
+static void *shot_timer(void *arg) {
+    (void)arg;
+    sleep(g_shot_s);
+    for (int k = 1;; k++) {
+        char path[PATH_MAX];
+        if (g_shot_every) {
+            const char *dot = strrchr(g_shot, '.');
+            int stem = dot ? (int)(dot - g_shot) : (int)strlen(g_shot);
+            snprintf(path, sizeof path, "%.*s_%d%s", stem, g_shot, k, dot ? dot : ".bmp");
+        } else {
+            snprintf(path, sizeof path, "%s", g_shot);
+        }
+        pthread_mutex_lock(&g_shot_lock);
+        snprintf(g_shot_path, sizeof g_shot_path, "%s", path);
+        pthread_mutex_unlock(&g_shot_lock);
+        if (!g_shot_every) return NULL;
+        sleep(g_shot_every);
+    }
+}
 static unsigned g_watchdog_s;
 
 int  script_arg(int argc, char **argv, int i);   /* script.c (tpw-recomp's): scripted input */
@@ -179,6 +215,8 @@ static void usage(void) {
            "  --game DIR   the game folder (default: game)\n"
            "  --headless   no window, no sound device\n"
            "  --resolution WxH|native|options   the display mode, kept for later runs (options: the game's own)\n"
+           "  --windowed   in a window (F11 toggles); --free-mouse: the mouse is not held in the picture\n"
+           "  --shot FILE.bmp [--shot-after S] [--shot-every S]   the screen, S seconds in (default 10), and again\n"
            "  --watchdog S stop after S seconds, saying where the game was\n"
            "  --trace      every import call, as it is made\n"
            "  --verbose    every stub as it is bound, every Direct3D 9 call\n"
@@ -196,6 +234,17 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = 1;
         else if (!strcmp(argv[i], "--windowed")) g_windowed = 1;
+        else if (!strcmp(argv[i], "--free-mouse")) g_free_mouse = 1;
+        else if (!strcmp(argv[i], "--shot") && i + 1 < argc) {
+            static char path[PATH_MAX];
+            const char *s = argv[++i];
+            /* absolute: the game runs in its own folder */
+            if (s[0] != '/' && getcwd(path, sizeof path)) snprintf(path + strlen(path), sizeof path - strlen(path), "/%s", s);
+            else snprintf(path, sizeof path, "%s", s);
+            g_shot = path;
+        }
+        else if (!strcmp(argv[i], "--shot-after") && i + 1 < argc) g_shot_s = (unsigned)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--shot-every") && i + 1 < argc) g_shot_every = (unsigned)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--resolution") && i + 1 < argc) {
             resolution = argv[++i];
             if (strcmp(resolution, "options") && !mode_valid(resolution)) {
@@ -259,7 +308,8 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
     /* The game takes its mouse non-exclusively, draws its own cursor and
      * turns the camera by DirectInput's relative axes: give it the mouse's
      * movement, past the window's edge, as Windows does. */
-    hle_dinput_relative_shared(1);
+    if (!g_free_mouse) hle_dinput_relative_shared(1);
+    else hle_screen_confine(0);                         /* the pointer goes where it likes; the camera stops at the edge */
     if (hle_screen_open(STL_TITLE, !g_windowed, g_headless) != 0) return 1;
     /* The game pumps its window's messages on a thread of its own, and
      * AppKit takes events on the main thread only: SDL is pumped there (at
@@ -267,6 +317,11 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
      * itself), and a pump from another thread reads the queue as it is. */
     if (!g_headless) hle_set_pump_hook(stl_pump);
     if (!g_headless && (getenv("STL_CHECK_WINDOW") || getenv("STL_WINDOW_SHOT"))) hle_screen_frame_hook = shown;
+    if (g_shot) {
+        pthread_t t;
+        pthread_create(&t, NULL, shot_timer, NULL);
+        pthread_detach(t);
+    }
     if (g_watchdog_s) {
         pthread_t t;
         pthread_create(&t, NULL, watchdog, NULL);
