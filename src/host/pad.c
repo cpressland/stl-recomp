@@ -123,6 +123,11 @@ void stl_pad_start(void) {
     g_start_ms = SDL_GetTicks();
     const char *v = getenv("STL_VPAD");
     if (v && *v) vpad_open(v);
+    /* A controller already connected appears a moment after the subsystem
+     * starts (on a Mac, Bluetooth and USB pads come through the system's
+     * own discovery, delivered as events): wait for one, up to a second,
+     * since the game looks only once. */
+    for (uint32_t t0 = SDL_GetTicks(); !SDL_NumJoysticks() && SDL_GetTicks() - t0 < 1000; SDL_Delay(10)) SDL_PumpEvents();
     SDL_JoystickUpdate();
     find_pad(SDL_GetTicks());
     report();
