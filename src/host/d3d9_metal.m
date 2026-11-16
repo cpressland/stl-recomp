@@ -1111,7 +1111,7 @@ static void window_show(void) {
     if (best < 0) return;
     memcpy(g_win_px, g_show[best].contents, (size_t)g_show_w * (size_t)g_show_h * 4);
     g_shown = newest;
-    hle_gdi_window_touched();
+    hle_gdi_window_changed();                           /* shown by the flip at the end of Present */
 }
 
 /* Autoreleased objects (command buffers, encoders, descriptors) are let go
@@ -1138,7 +1138,13 @@ void gpu_present(dev_t_ *d) {
     [c commit];
     G->cmd = nil;
     dispatch_semaphore_wait(G->inflight, DISPATCH_TIME_FOREVER);
-    if (!stl_headless) window_show();
+    if (!stl_headless) {
+        window_show();
+        /* Shown as a flip, and paced as one: held to the display's refresh,
+         * near 60 a second (HLE_MAX_FPS), where the game would otherwise
+         * draw as many frames as the machine allows (490 a second here). */
+        hle_screen_flip();
+    }
     G->frame++;
     G->ring_i = (G->ring_i + 1) % FRAMES, G->ring_used = 0;
     G->gen++;

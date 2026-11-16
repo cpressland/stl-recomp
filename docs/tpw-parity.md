@@ -125,7 +125,11 @@ stl-recomp's build looks for pcrecomp beside it (`../pcrecomp`), so from
    buffered z axis reads ±360 for 3 notches); whether it zooms wants a
    hand on a mouse. The camera's movement past the edge still arrives
    whole (a 3000-pixel move read as 3000).
-2. Pace Present to the display (or 60 a second).
+2. ~~Pace Present to the display.~~ Done (2026-11-16): Present ends with
+   `hle_screen_flip` (pcrecomp `win32hle-screen-flip`), win32hle's pacer.
+   The same windowed minute: 490 frames a second at 118% of a core before,
+   60 at 40% after, held 2 refreshes of the 120 Hz display, none late.
+   `HLE_MAX_FPS` changes the cap; headless runs stay unpaced.
 3. XInput from SDL's game controllers.
 4. Then the list above resumes: tests of every mission, upstream PRs,
    Linux (now with a D3D9 Vulkan backend to write), tracing.

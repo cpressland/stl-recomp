@@ -123,6 +123,12 @@ or the power wheel (E) goes on past the window's edge, as on Windows; the
 game draws its own cursor. `--free-mouse` turns that off: the pointer
 leaves the picture freely, and the camera stops turning at the edge.
 
+The game draws at most 60 frames a second, each held to the display's
+refresh (2 refreshes on a 120 Hz display), and waits rather than spins
+in between: on Windows its monitor's refresh held it, and uncapped it drew
+nearly 500 a second for the same picture. `HLE_MAX_FPS=N` sets another cap
+(0 for none).
+
 `--resolution WxH` picks the display mode (any size from 640x480, widescreen
 and ultrawide included), `native` the Mac's own (its desktop size), and
 `options` leaves it to the game's Video options. It is kept for later runs
@@ -243,6 +249,7 @@ and the rest) and this game's own, one commit each on top:
 | `win32hle-warp-picture-size` | SetCursorPos puts the pointer by the picture's size | **Yes**: the power distribution wheel (E) centres the cursor |
 | `disasm32-decode-cache` | disasm32 decodes each address once (its JSON CLI) | No, but the first build's analysis takes 21 minutes without it, 4 with |
 | `win32hle-dinput-relative-shared` | a host can give a non-exclusive DirectInput mouse movement alone (`hle_dinput_relative_shared`) | **Yes**: the camera turns past the window's edge |
+| `win32hle-screen-flip` | `hle_screen_flip`: a host renderer's frame shown and paced as a DirectDraw flip | **Yes**: the frame rate is held near 60 (`HLE_MAX_FPS`) |
 
 To make a new lock (after one of these changes, or when `tpw` moves),
 cherry-pick these commits onto the fork's `tpw` in that order, push the
