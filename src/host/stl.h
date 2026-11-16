@@ -39,6 +39,7 @@ void stl_cpuid(void);
 int  stl_mode(uint32_t *w, uint32_t *h);                            /* main.c: the display mode kept, if any */
 void stl_mode_used(uint32_t w, uint32_t h);                         /* ...the game chose this one */
 int  stl_shot_take(char *out, size_t n);
+int  stl_main_thread(void);                                         /* main.c: on stl_main's thread (the window's) */
 void stl_pad_start(void);                                           /* pad.c: a game controller, before the game runs */
 void stl_pad_poll(void);                                            /* ...and each frame (Present) */                            /* main.c: a screenshot wanted now (--shot), its path */
 void stl_pump(void);                                                /* main.c: SDL's events, on the main thread */                                               /* cpu.c */

@@ -486,7 +486,7 @@ static void shots(dev_t_ *d) {
 static void v_Present(void) {
     count();
     dev_t_ *d = DEV(A32(0));
-    if (!g_frames) fprintf(stderr, "[d3d9] the first Present is on the %s thread\n", pthread_main_np() ? "main" : "a second");
+    if (!g_frames) fprintf(stderr, "[d3d9] the first Present is on the %s thread\n", stl_main_thread() ? "main" : "a second");
     ++g_frames;
     shots(d);
     gpu_present(d);

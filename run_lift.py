@@ -60,9 +60,13 @@ SETJMP_IMPORTS = (b'_setjmp3', b'_setjmp', b'setjmp')
 # Functions per .c file: D3DX's are long (its HLSL compiler), and at 400 a
 # few of its files kept one core busy for minutes after the rest were done.
 CHUNK = {'d3dx9': 100}
+# ...and no file over this many bytes of C (a function longer than it gets a
+# file to itself): gcc holds a whole file in memory, and a 63 MB one of
+# D3DX's ran a Steam Deck out of memory three compiles at a time.
+MAX_FILE_BYTES = 8 << 20
 
 # A lifted function this many lines long or more is compiled without
-# optimisation (clang's optnone), by module. The long ones are D3DX's: one
+# optimisation (RECOMP_BIG_FN: clang's optnone, gcc's optimize("O0")), by module. The long ones are D3DX's: one
 # 77 KB function inside its shader compiler, whose switch arms the catalog
 # takes for entries, each lifted as its own copy of nearly the whole body
 # (2 million lines over 10,000 a function). At -O1 one file of them took 24
@@ -221,10 +225,22 @@ def lift_module(m, out, idx, entries, log):
         for item in sorted(chunk, key=lambda c: c[1]):
             windows.setdefault(item[1] >> 16, []).append(item)
         for w, items in sorted(windows.items()):
-            for k in range(0, len(items), per):
-                write_chunk(out, idx, items[k:k + per])
+            # A file holds `per` functions, or MAX_FILE_BYTES of C, whichever
+            # comes first: gcc holds a whole file in memory, and one of
+            # D3DX's at 63 MB took gigabytes even unoptimised.
+            groups, cur, size = [], [], 0
+            for item in items:
+                if cur and (len(cur) >= per or size + len(item[0]) > MAX_FILE_BYTES):
+                    groups.append(cur)
+                    cur, size = [], 0
+                cur.append(item)
+                size += len(item[0])
+            if cur:
+                groups.append(cur)
+            for k, group in enumerate(groups):
+                write_chunk(out, idx, group)
                 os.replace(os.path.join(out, 'recomp_%04d.c' % idx),
-                           os.path.join(out, 'recomp_%s_%04X_%d.c' % (m.name, w, k // per)))
+                           os.path.join(out, 'recomp_%s_%04X_%d.c' % (m.name, w, k)))
                 idx += 1
         chunk = []
 
@@ -267,7 +283,7 @@ def lift_module(m, out, idx, entries, log):
                 st['errors'] += 1
                 log(f'[{m.name}] error in {name}: {e}')
         if body.count('\n') >= BIG_FUNCTION_LINES.get(m.name, BIG_FUNCTION_LINES_DEFAULT):
-            body = body.replace('void %s(void)' % name, '__attribute__((optnone, noinline)) void %s(void)' % name, 1)
+            body = body.replace('void %s(void)' % name, 'RECOMP_BIG_FN void %s(void)' % name, 1)
             st['optnone'] += 1
         chunk.append((body, addr, name))
         entries.append((addr, name))
@@ -354,7 +370,18 @@ def main():
                 '#include <stdint.h>\n\n'
                 'void recomp_not_lifted(uint32_t va);\n'
                 '#define RECOMP_NOT_LIFTED(va) recomp_not_lifted(va)\n'
-                'extern uint32_t g_stl_setjmp_resume;   /* src/host/setjmp.c */\n\n')
+                'extern uint32_t g_stl_setjmp_resume;   /* src/host/setjmp.c */\n\n'
+                '/* A function too long to optimise in reasonable time and memory\n'
+                ' * (BIG_FUNCTION_LINES): compiled as written, by clang or gcc. gcc\n'
+                ' * ignores clang\'s optnone, and optimising D3DX\'s 445 of them ran a\n'
+                ' * Steam Deck out of memory. */\n'
+                '#if defined(__clang__)\n'
+                '#define RECOMP_BIG_FN __attribute__((optnone, noinline))\n'
+                '#elif defined(__GNUC__)\n'
+                '#define RECOMP_BIG_FN __attribute__((optimize("O0"), noinline))\n'
+                '#else\n'
+                '#define RECOMP_BIG_FN\n'
+                '#endif\n\n')
         for a, n in entries:
             f.write('void %s(void);\n' % n)
     with open(os.path.join(args.out, 'recomp_dispatch.c'), 'w', newline='\n') as f:

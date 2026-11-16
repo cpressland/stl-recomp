@@ -13,7 +13,7 @@ Legacy.app will look):
     build/analysis/  each module's function catalog and the rest of the
                      lift's inputs (tools/gen/analyse.py)
     build/gen/       the lifted C of all four modules (run_lift.py)
-    build/host/      the compiled game: stl, the program, and libstl.dylib,
+    build/host/      the compiled game: stl, the program, and libstl.dylib (.so),
                      the same game for the app to load (stl_main)
     install.json     what each part was made from
 
@@ -73,7 +73,11 @@ PATCH_MSI = 'Star Trek Legacy Patch v1.2.msi'
 SKIP = ('DirectX/',)
 # Bumped when the disc's steps change what they make.
 DATA_VERSION = 1
-DEFAULT_DEST = os.path.expanduser('~/Library/Application Support/Star Trek Legacy')
+if sys.platform == 'darwin':
+    DEFAULT_DEST = os.path.expanduser('~/Library/Application Support/Star Trek Legacy')
+else:                         # Linux: as tpw-recomp's
+    DEFAULT_DEST = os.path.join(os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share'),
+                                'star-trek-legacy')
 # What a player's run writes into the game folder, carried over a new one.
 # (None known yet: filled in once the game runs and we see where it saves.)
 KEEP = ()
@@ -195,6 +199,30 @@ def install_files(db, cabinets, out, skip=SKIP, progress=None):
     return written[0]
 
 
+def memory_bytes():
+    """The machine's memory, or 0 if it cannot be told."""
+    try:
+        if sys.platform == 'darwin':
+            return int(subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, text=True).stdout)
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemTotal:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+def compile_jobs():
+    """Files compiled at a time: one for each 4 GB of memory, at most one a
+    core. The longest lifted files take nearly 3 GB in gcc; a job a core on a
+    Steam Deck (8 cores, 16 GB) ran it out of memory, and SteamOS's earlyoom
+    killed the compiler (and once disturbed the Steam client)."""
+    cores = os.cpu_count() or 4
+    mem = memory_bytes()
+    return max(1, min(cores, mem // (4 << 30))) if mem else cores
+
+
 class Install:
     def __init__(self, a):
         self.a = a
@@ -282,8 +310,11 @@ class Install:
         self.cmake, self.ninja = self.find_tools()
         if not self.cmake or not self.ninja:
             raise Failed('no cmake or ninja (README: prerequisites)')
-        if subprocess.run(['xcrun', '--find', 'clang'], capture_output=True).returncode:
-            raise Failed("no C compiler: install Xcode's command line tools (xcode-select --install)")
+        if sys.platform == 'darwin':
+            if subprocess.run(['xcrun', '--find', 'clang'], capture_output=True).returncode:
+                raise Failed("no C compiler: install Xcode's command line tools (xcode-select --install)")
+        elif not (os.environ.get('CC') or shutil.which('cc') or shutil.which('clang') or shutil.which('gcc')):
+            raise Failed('no C compiler: install clang (or gcc), e.g. the build-essential package')
         if self.a.sdl_frameworks:
             for f in SDL_FRAMEWORKS:
                 if not os.path.isdir(os.path.join(self.a.sdl_frameworks, f)):
@@ -461,7 +492,9 @@ class Install:
             self.state['host_config'] = config
             self.save_state()
         say('compiling (a few minutes the first time; after a fix, what changed)...')
-        self.run(self.cmake, '--build', self.host)
+        jobs = self.a.jobs or compile_jobs()
+        say(f'{jobs} files at a time')
+        self.run(self.cmake, '--build', self.host, '-j', str(jobs))
 
     # ---- the order -------------------------------------------------------
 
@@ -523,6 +556,8 @@ def main():
     ap.add_argument('--ffmpeg', help='a static ffmpeg, include/ and lib/, for the movies '
                     '(default: pkg-config\'s, if any; app/toolchain.sh builds one)')
     ap.add_argument('--export-sources', metavar='DIR', help='copy the sources the build needs to DIR, and stop')
+    ap.add_argument('--jobs', type=int, help='files compiled at a time (default: one for each 4 GB of memory, '
+                    'at most one a core)')
     ap.add_argument('--force', action='store_true', help='redo every step')
     ap.add_argument('--status', action='store_true', help='print what a run would redo, as JSON')
     a = ap.parse_args()

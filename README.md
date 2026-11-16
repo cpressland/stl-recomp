@@ -172,6 +172,10 @@ window, as its close button does.
 `seconds control value` (`a b x y back start ls rs lb rb up down left
 right`, 0 or 1; `lx ly rx ry lt rt`, -1 to 1).
 
+`STL_USER=DIR` keeps the game's saves and settings in DIR instead of `User`
+beside the game folder; the smoke test uses an empty one, since with a
+save the same clicks continue the campaign rather than start it.
+
 `--shot FILE.bmp` saves the screen 10 seconds in (`--shot-after S` for
 another time), and with `--shot-every S` every S seconds after that, as
 `FILE_1.bmp`, `FILE_2.bmp`, and so on.

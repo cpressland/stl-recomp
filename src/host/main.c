@@ -110,7 +110,7 @@ static void shown(const uint8_t *px, int w, int h, int pitch, int bpp) {
 }
 
 void stl_pump(void) {
-    if (pthread_main_np()) hle_screen_pump();
+    if (stl_main_thread()) hle_screen_pump();
 }
 
 /* What the installer leaves in the registry (Star Trek Legacy.msi's
@@ -226,7 +226,14 @@ static void usage(void) {
 }
 
 /* The program's main (exe.c), and the app's way in. */
+/* The thread stl_main runs on: the window's, where SDL takes events
+ * (AppKit's main thread on a Mac). */
+static pthread_t g_main_thread;
+static int g_main_set;
+int stl_main_thread(void) { return g_main_set && pthread_equal(pthread_self(), g_main_thread); }
+
 __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
+    g_main_thread = pthread_self(), g_main_set = 1;
     const char *game = "game", *resolution = NULL;
     int run = 0;
     setvbuf(stderr, NULL, _IONBF, 0);
@@ -289,7 +296,9 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
     {   /* the user's folders (SHGetFolderPathA): drive U:, beside the game */
         static char user[PATH_MAX + 8];
         char *slash = strrchr(game_full, '/');
-        snprintf(user, sizeof user, "%.*s/User", slash ? (int)(slash - game_full) : 1, game_full);
+        const char *env = getenv("STL_USER");      /* tests: a folder of their own, no saves */
+        if (env && *env) snprintf(user, sizeof user, "%s", env);
+        else snprintf(user, sizeof user, "%.*s/User", slash ? (int)(slash - game_full) : 1, game_full);
         mkdir(user, 0755);
         stl_set_user_root(user);
         snprintf(g_mode_file, sizeof g_mode_file, "%s/resolution.txt", user);
