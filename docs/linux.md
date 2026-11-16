@@ -47,6 +47,23 @@ an AppImage) that carries the build's tools and none of the game.
    their caches, samplers, clears, StretchRect, readback and shots, and
    the window's frame copied down as the Metal one is. Then the game on
    the Deck's screen, and the smoke test there.
+   **Done (2026-11-16):** `src/host/d3d9_vulkan.c`, `d3d9_metal.m` part for
+   part. Depth, stencil, culling and bias are dynamic state (Vulkan 1.3),
+   so pipelines are keyed as Metal's are; partial clears are
+   `vkCmdClearAttachments` and StretchRect `vkCmdBlitImage`, so it has no
+   shaders of its own; the shaders are compiled by shaderc
+   (`libshaderc_shared.so.1`, in the freedesktop runtime) as they come.
+   Every image stays in GENERAL, one barrier between a write and what
+   follows, as in pcrecomp. Without the loader, a GPU or shaderc the device
+   draws nothing and the game runs on (what `d3d9_null.c` was). On the Deck
+   (RADV, Van Gogh): the smoke test passes headless (every shader and
+   pipeline made; the menus, the campaign's opening scenes in 3D and the
+   first mission drawn as the Mac draws them; about 200 frames a second),
+   and windowed on Plasma's Wayland session it runs at the display's 60.
+
+   Not yet, here as on the Mac: fixed-function draws (none in the game's
+   smoke test), points' size, vertex textures, GPU objects freed when the
+   game releases them, a pipeline cache kept on disk.
 4. **The Flatpak**, from tpw-recomp's manifest and launcher, and its CI.
 5. **The AppImage**, if wanted.
 

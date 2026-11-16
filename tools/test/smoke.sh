@@ -32,7 +32,7 @@ checks = [
     ('ran until the watchdog (exit 4)', code == 4),
     ('no fault', '=== fault' not in log and 'FATAL' not in log),
     ('every shader translated and compiled', 'not translated' not in log and 'does not compile' not in log),
-    ('pipelines all made', '[metal] pipeline:' not in log),
+    ('pipelines all made', '] pipeline:' not in log),
     ('the input reached the game', log.count('[input]') == 8),
     ('the campaign started (its first mission\'s script loaded)', 'STL12S.dsl loaded' in log),
     ('at least 8 screenshots with a picture', len(lit) >= 8),

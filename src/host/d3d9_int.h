@@ -1,11 +1,12 @@
 /*
- * d3d9_int.h - what d3d9.c (the interfaces, the state) and d3d9_metal.m
- * (the GPU) share: the records behind the COM objects, and the GPU calls.
+ * d3d9_int.h - what d3d9.c (the interfaces, the state) and the GPU side
+ * (d3d9_metal.m on a Mac, d3d9_vulkan.c on Linux) share: the records behind
+ * the COM objects, and the GPU calls.
  *
  * Every object is an hle_com_new block: vtable, reference count, then at +8
  * the VA of its record, in guest memory; every record starts with its
- * device. The GPU's own objects (Metal textures, buffers, functions) hang
- * off the records as host pointers, retained by d3d9_metal.m.
+ * device. The GPU's own objects (Metal textures, buffers, functions; Vulkan
+ * images, buffers, shader modules) hang off the records as host pointers.
  */
 #ifndef D3D9_INT_H
 #define D3D9_INT_H
@@ -99,7 +100,7 @@ uint32_t rows_of(uint32_t format, uint32_t height);
 /* A level's (and face's) bytes in guest memory, made on first use. */
 uint32_t level_mem(res_t *r, uint32_t level, uint32_t face, uint32_t *pitch, uint32_t *slice);
 
-/* ---- the GPU (d3d9_metal.m) -------------------------------------------------- */
+/* ---- the GPU (d3d9_metal.m, d3d9_vulkan.c) -------------------------------------------------- */
 int  gpu_available(void);
 void gpu_device(dev_t_ *d);                        /* after CreateDevice and Reset */
 void gpu_clear(dev_t_ *d, uint32_t nrects, uint32_t rects, uint32_t flags, uint32_t color, float z, uint32_t stencil);
@@ -113,7 +114,7 @@ void gpu_stretch_rect(dev_t_ *d, uint32_t src, uint32_t src_rect, uint32_t dst, 
 void gpu_readback(dev_t_ *d, res_t *r, uint32_t level, uint32_t face);   /* a render target's pixels to its memory */
 int  gpu_shot(dev_t_ *d, const char *path);       /* the back buffer as a BMP */
 
-/* What a resource's GPU copy is, by D3D9 format (d3d9_metal.m). */
+/* Whether a resource lives on the GPU, its pixels drawn there. */
 int  gpu_is_render_target(const res_t *r);
 
 #endif
