@@ -29,7 +29,7 @@
 #define WM_RBUTTONDOWN 0x0204u
 #define WM_RBUTTONUP   0x0205u
 
-typedef struct { char kind; int x, y; double t; } ev_t;   /* m move, c click, r right click, k key, d/u key down/up, v relative move, q quit */
+typedef struct { char kind; int x, y; double t; } ev_t;   /* m move, c click, r right click, k key, d/u key down/up, v relative move, q quit, w wheel */
 #define MAX_EV 256
 static ev_t g_ev[MAX_EV];
 static int g_nev;
@@ -47,10 +47,11 @@ int script_arg(int argc, char **argv, int i) {
     else if (!strcmp(argv[i], "--keyup")) e.kind = 'u';
     else if (!strcmp(argv[i], "--rel")) e.kind = 'v';
     else if (!strcmp(argv[i], "--quit")) e.kind = 'q';
+    else if (!strcmp(argv[i], "--wheel")) e.kind = 'w';
     else return 0;
     if (e.kind == 'q') {                        /* --quit @s (or s): the window closed, as its close button does */
         e.t = atof(a[0] == '@' ? a + 1 : a);
-    } else if (e.kind == 'k' || e.kind == 'd' || e.kind == 'u') {
+    } else if (e.kind == 'k' || e.kind == 'd' || e.kind == 'u' || e.kind == 'w') {
         char *at = strchr(a, '@');
         if (!at) return 0;
         e.x = (int)strtol(a, NULL, 0);
@@ -121,6 +122,10 @@ static void *run(void *arg) {
             sleep_ms(150);
             key(0, (uint32_t)e->x);
             fprintf(stderr, "[input] %.1fs key %d\n", e->t, e->x);
+            break;
+        case 'w':                               /* the wheel turned n notches, away from the user positive */
+            mach_enter(); hle_input_wheel(e->x * 120); mach_leave();
+            fprintf(stderr, "[input] %.1fs wheel %d\n", e->t, e->x);
             break;
         case 'q': {
             mach_enter();

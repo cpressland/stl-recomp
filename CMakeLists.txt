@@ -41,10 +41,21 @@ else()
   set(STL_MEM_BASE "" CACHE STRING "host address of the guest's 4 GB (empty: anywhere)")
 endif()
 
+# The lifted code and the runtime agree on these (pcrecomp's recomp32), as
+# tpw-recomp builds them: the x87 stack's push and pop move a pointer over a
+# ring rather than all eight registers, and a function's own pushes stay in
+# locals (RECOMP_X87_RING, RECOMP_X87_LOCAL); an indirect call's target is
+# cached per call site and in one table (RECOMP_ICALL_SITE_CACHE,
+# RECOMP_RESOLVE_CACHE: one thread at a time runs lifted code, under
+# win32hle's machine lock). Legacy.exe makes millions of indirect calls a
+# second.
+set(STL_RECOMP_DEFS RECOMP_RETADDR=0u RECOMP_LOCAL_REGS RECOMP_X87_RING RECOMP_X87_LOCAL
+    RECOMP_RESOLVE_CACHE=16384 RECOMP_ICALL_SITE_CACHE)
+
 add_library(stl_gen OBJECT ${GEN_SOURCES})
 set_target_properties(stl_gen PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(stl_gen PRIVATE ${GEN_DIR} ${PCRECOMP}/runtime/win32hle ${PCRECOMP}/runtime/recomp32)
-target_compile_definitions(stl_gen PRIVATE RECOMP_RETADDR=0u RECOMP_LOCAL_REGS)
+target_compile_definitions(stl_gen PRIVATE ${STL_RECOMP_DEFS})
 if(STL_MEM_BASE)
   target_compile_definitions(stl_gen PRIVATE RECOMP_MEM_BASE=${STL_MEM_BASE})
 endif()
@@ -92,7 +103,7 @@ list(FILTER HOST_SOURCES EXCLUDE REGEX "/exe\\.c$")
 add_library(stl_obj OBJECT ${HOST_SOURCES} ${HLE_SOURCES})
 set_target_properties(stl_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(stl_obj PRIVATE src/host ${GEN_DIR} ${HLE} ${PCRECOMP}/runtime/recomp32)
-target_compile_definitions(stl_obj PRIVATE RECOMP_RETADDR=0u RECOMP_LOCAL_REGS)
+target_compile_definitions(stl_obj PRIVATE ${STL_RECOMP_DEFS})
 if(STL_MEM_BASE)
   target_compile_definitions(stl_obj PRIVATE RECOMP_MEM_BASE=${STL_MEM_BASE})
 endif()

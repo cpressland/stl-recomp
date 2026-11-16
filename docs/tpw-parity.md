@@ -89,3 +89,43 @@ stl-recomp lacks by comparison, and the order to close it in.
     controller play on Mac (and the Steam Deck, after Linux).
 12. **Bring-up tracing.** Port TPW's `trace.c` for the next hard bug. It's
     only needed when one turns up.
+
+## Since then (reviewed 2026-11-16)
+
+tpw-recomp has 24 commits since 2026-11-08. Its pcrecomp is now the fork's
+`tpw` branch (`3fc41e5`): upstream main, which has merged five of the
+pending PRs and added its own x87 and indirect-call speed-ups, plus each
+change still in review as its own PR (#163, #180-#187). `stl-lock` is
+behind all of it. What that, and the rest, means here:
+
+| tpw-recomp has | stl-recomp | Worth it here? |
+|---|---|---|
+| **The speed-ups.** `RECOMP_X87_RING`, `RECOMP_X87_LOCAL`, `RECOMP_RESOLVE_CACHE=16384`, `RECOMP_ICALL_SITE_CACHE` (upstream #174, #175), a hand-over on a condition variable, `Sleep(0)` that sleeps: a park went from 119% of a core to 33% | none of them: `stl-lock` predates them, and CMake sets only `RECOMP_LOCAL_REGS` | **Yes, first.** Legacy.exe makes ~4 million indirect calls a second (watchdog counts); the call caches are aimed at exactly that |
+| **A frame-rate cap.** win32hle's pacer holds a game near 60 a second, in step with the display | none: Present returns at once. A window ran ~228 frames a second in a test, all of it CPU and GPU spent | **Yes.** D3D9 doesn't flip through screen.c, so the pacer can't see it: Present has to pace itself (or wait for the display) |
+| **The mouse wheel**, as `WM_MOUSEWHEEL` and DirectInput's z axis (pcrecomp `f6b1037`) | not passed on: the game never sees the wheel | **Likely.** The game's camera zooms, and its DIMOUSESTATE has the z axis |
+| **The extended-key bit** for the arrows, Delete, Home, Insert, Page Up/Down (pcrecomp `3fc41e5`): without it a game reads them as the keypad | missing | **Likely.** Not tested; any of the game's bindings on those keys may be off |
+| **A controller** (`src/host/pad.c`, SDL GameController turned into mouse and keys, through pcrecomp's poll hook `f6f05f6`) | none | **Yes, but differently.** Legacy supports an Xbox 360 pad itself, through XInput, which nothing answers yet (`GetProcAddress(xinput…)` finds nothing). XInputGetState from SDL's controller is a better fit than TPW's mapping |
+| **Linux**: a Flatpak and now an AppImage carrying its own compiler (zig), Direct3D through Vulkan (`d3d_vulkan.c`, DirectX 6 only) | macOS only | **Later.** TPW's Vulkan renderer is DirectX 6's; Legacy's D3D9 would need its own Vulkan backend, as `d3d9_metal.m` is for Metal |
+| **Versions from `v` tags only** (`git describe --match 'v[0-9]*'`) | `git describe --tags` | Only once a non-version tag appears (TPW's came from the Flatpak CI). Trivial to match |
+| **A first-launch fix**: a file the host writes into the game's folders is announced (`hle_path_changed()`), or the path layer's cached listing hides it | not affected: `User/resolution.txt` is read by the host, never the game | No |
+| Widescreen dialogs, Halloween's lightning, QMixer, the park camera | — | No: TPW's own game |
+
+Also: the repositories now sit in `recomps/`, and pcrecomp doesn't.
+stl-recomp's build looks for pcrecomp beside it (`../pcrecomp`), so from
+`recomps/stl-recomp` a build needs `--pcrecomp ~/dev/github.com/pcrecomp`
+(install.py) or `-DPCRECOMP=` (CMake), or a link.
+
+### What to do, in order
+
+1. ~~Rebuild the lock on the fork's `tpw` branch, with the four flags.~~
+   Done (2026-11-16): the fork's `stl` branch is `tpw` plus this game's
+   eight commits, and CMake sets the flags. A windowed mission: 380 frames
+   a second at 116% of a core before, 490 at 118% after (328 to 416
+   frames per CPU second, 27% more). The wheel reaches the game (its
+   buffered z axis reads ±360 for 3 notches); whether it zooms wants a
+   hand on a mouse. The camera's movement past the edge still arrives
+   whole (a 3000-pixel move read as 3000).
+2. Pace Present to the display (or 60 a second).
+3. XInput from SDL's game controllers.
+4. Then the list above resumes: tests of every mission, upstream PRs,
+   Linux (now with a D3D9 Vulkan backend to write), tracing.

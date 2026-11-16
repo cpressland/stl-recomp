@@ -1,7 +1,9 @@
 #!/bin/sh
 # A smoke test of the whole game, headless: the intro, the main menu, the
 # campaign's first mission, the ship under way. Scripted input steers it
-# (the clicks and keys below, at seconds from the start); screenshots are
+# (the clicks and keys below, at seconds from the start: Campaign, then
+# Start Campaign, which works whether the game opens on the main menu or on
+# the Single Player page, as it does until a profile is saved); screenshots are
 # taken every 2000 frames and checked for a picture (not black) at each
 # stage, and the run for no fault.
 #
@@ -13,7 +15,7 @@ STL=${1:?the stl program}; GAME=${2:?the game folder}; OUT=${3:-work/smoke}
 rm -rf "$OUT" && mkdir -p "$OUT/shots"
 OUT=$(cd "$OUT" && pwd)                 # the game runs in its own folder: absolute paths
 STL_SHOT="$OUT/shots" STL_SHOT_EVERY=2000 "$STL" --game "$GAME" --run --headless --mute --resolution 1024x768 --watchdog 230 \
-    --click 512,408@75 --click 512,393@95 --key 32@125 \
+    --click 512,358@75 --click 512,358@80 --click 512,393@90 --key 32@125 \
     --key 0xBB@140 --key 0xBB@141 --key 0xBB@142 --key 0xBB@143 > "$OUT/run.log" 2>&1
 code=$?
 python3 -I - "$OUT" "$code" <<'PY'
@@ -31,7 +33,8 @@ checks = [
     ('no fault', '=== fault' not in log and 'FATAL' not in log),
     ('every shader translated and compiled', 'not translated' not in log and 'does not compile' not in log),
     ('pipelines all made', '[metal] pipeline:' not in log),
-    ('the input reached the game', log.count('[input]') == 7),
+    ('the input reached the game', log.count('[input]') == 8),
+    ('the campaign started (its first mission\'s script loaded)', 'STL12S.dsl loaded' in log),
     ('at least 8 screenshots with a picture', len(lit) >= 8),
     ('the last screenshot has a picture (the mission)', bool(shots) and shots[-1] in lit),
 ]

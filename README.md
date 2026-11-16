@@ -218,37 +218,40 @@ SPARKLE_PRIVATE_KEY="$(security find-generic-password -s https://sparkle-project
 
 ## pcrecomp: pending merges
 
-This builds against pcrecomp's `main` plus branches still in review, merged
-into one commit that `app/pcrecomp.lock` pins: the `stl-lock` branch of
-[cpressland/pcrecomp](https://github.com/cpressland/pcrecomp). Clone it
-beside this repository at that commit:
+This builds against one branch of [cpressland/pcrecomp](https://github.com/cpressland/pcrecomp),
+`stl`, at the commit `app/pcrecomp.lock` pins. Clone it beside this
+repository at that commit (or pass `--pcrecomp DIR` to install.py, and
+`-DPCRECOMP=DIR` to CMake, where it is elsewhere):
 
 ```
 git clone https://github.com/cpressland/pcrecomp ../pcrecomp
 git -C ../pcrecomp checkout "$(sed -n 's/^ref=//p' app/pcrecomp.lock)"
 ```
 
-What `stl-lock` adds to `main`:
+`stl` is the fork's `tpw` branch (tpw-recomp's: upstream `main` with what
+is still in review there, each its own PR: Metal, the frame pacer, the
+relative DirectInput mouse, the wheel, the hand-over, the extended-key bit
+and the rest) and this game's own, one commit each on top:
 
-| Branch | What | Needed? |
+| Commit (branch) | What | Needed? |
 |---|---|---|
 | `win32hle-eh32` | guest C++ exceptions on win32hle | **Yes**: the engine and its runtime throw |
 | `lift-eh32-eh-prolog` | landing pads for frames opened through `__EH_prolog` | **Yes**: msvcp71's catches |
-| `win32hle-dinput8` | DirectInput 8, on `win32hle-dinput` | **Yes**: the game's mouse and keyboard |
+| `win32hle-dinput8` | DirectInput 8 | **Yes**: the game's mouse and keyboard |
 | `win32hle-dx9-system-dlls` | `d3d9`, `dinput8` and XInput load as system DLLs | **Yes**: the game loads `d3d9.dll` at run time |
-| `win32hle-dsound3d` | DirectSound 3D, on `win32hle-dsound-cursor` | **Yes**: the game places every sound |
+| `win32hle-dsound3d` | DirectSound 3D | **Yes**: the game places every sound |
 | `win32hle-warp-picture-size` | SetCursorPos puts the pointer by the picture's size | **Yes**: the power distribution wheel (E) centres the cursor |
-| `win32hle-dinput-relative-shared` | a host can give a non-exclusive DirectInput mouse movement alone (`hle_dinput_relative_shared`), on `tpw-local` | **Yes**: the camera turns past the window's edge |
 | `disasm32-decode-cache` | disasm32 decodes each address once (its JSON CLI) | No, but the first build's analysis takes 21 minutes without it, 4 with |
-| `tpw-local` | tpw-recomp's: DirectInput, Metal, the mouse held in the picture and its movement past the edge (`hle_input_raw`), the DirectSound cursor | **Yes**: the host's window, mouse and sound |
+| `win32hle-dinput-relative-shared` | a host can give a non-exclusive DirectInput mouse movement alone (`hle_dinput_relative_shared`) | **Yes**: the camera turns past the window's edge |
 
-To make a new lock (after one of these changes, or `main` moves), merge
-them again onto `origin/main` in that order, push the result to the fork's
-`stl-lock`, and put its commit in `app/pcrecomp.lock`. The merges conflict
+To make a new lock (after one of these changes, or when `tpw` moves),
+cherry-pick these commits onto the fork's `tpw` in that order, push the
+result as `stl`, and put its commit in `app/pcrecomp.lock`. They conflict
 in three places, each kept both ways: `runtime/win32hle/README.md` (both
 rows), `dinput.c`'s device fields (`exclusive` and `v8`), and `screen.c`'s
-`warp()` (the picture's size, and no warp while relative). When a branch
-is merged upstream, drop it from this table.
+`warp()` (the picture's size, and no warp while relative). When one is
+merged upstream, drop it from this table. (`stl-lock`, the branch before
+this one, stays for the releases up to v0.4.1, whose lock names it.)
 
 ## License
 
