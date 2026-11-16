@@ -1,6 +1,6 @@
 /*
  * dxso.h - Direct3D 9 shader bytecode (vs/ps 1.1 to 3.0) to Metal Shading
- * Language (dxso.c).
+ * Language, or to GLSL 4.50 for Vulkan (dxso.c).
  *
  * The interface between the stages is fixed, so any vertex shader pairs
  * with any pixel shader, as in Direct3D 9 (shader model 1 and 2):
@@ -14,8 +14,21 @@
  *                        3 struct dxso_params; streams from buffer 8
  *   textures, samplers   s<n> [[texture(n)]], [[sampler(n)]] (ps_1_x: stage n)
  *
- * Done in the shader because Metal has no fixed function for them: the
- * D3D9 half-pixel offset (vertex), the alpha test and vertex fog (pixel).
+ * GLSL (DXSO_GLSL), for Vulkan, the same with Vulkan's bindings, all in
+ * descriptor set 0:
+ *
+ *   vertex inputs        v<n>: location n
+ *   vertex -> fragment   locations 0 d0, 1 d1, 2..9 t0..t7, 10 fog
+ *   buffers (std140)     vertex 0..3, pixel 4..7, as Metal's 0..3; the bools
+ *                        as uvec4[4], so the same 64 bytes as Metal's uint[16]
+ *   textures, samplers   s<n>: a combined image sampler at binding 8 + n
+ *
+ * Clip space is Direct3D's (y up): the Vulkan side flips it with a negative
+ * viewport height, so gl_FragCoord is Direct3D's pixel position as it is.
+ *
+ * Done in the shader because Metal and Vulkan have no fixed function for
+ * them: the D3D9 half-pixel offset (vertex), the alpha test and vertex fog
+ * (pixel).
  */
 #ifndef DXSO_H
 #define DXSO_H
@@ -25,6 +38,7 @@
 #define DXSO_MAX_INPUTS 16
 
 enum { DXSO_TEX_2D = 0, DXSO_TEX_CUBE = 1, DXSO_TEX_3D = 2 };
+enum { DXSO_MSL = 0, DXSO_GLSL = 1 };
 
 typedef struct {
     /* ps_1_x declares no sampler types: each stage's bound texture's. */
@@ -32,6 +46,7 @@ typedef struct {
     /* A depth texture bound at a stage: sampled as a comparison
      * (hardware shadow mapping, tex2Dproj on a D24S8 texture). */
     uint16_t sampler_depth;
+    uint8_t lang;              /* DXSO_MSL (also with no options), DXSO_GLSL */
 } dxso_options;
 
 typedef struct {
@@ -41,12 +56,12 @@ typedef struct {
     uint8_t input_usage[DXSO_MAX_INPUTS], input_index[DXSO_MAX_INPUTS];
     uint16_t samplers_used;    /* bit n: s<n> (ps_1_x: stage n) */
     uint8_t sampler_type[16];
-    char *msl;                 /* malloc'd; entry point dxso_main */
-    char error[256];           /* why it failed, when msl is NULL */
+    char *text;                /* malloc'd: MSL (entry point dxso_main) or GLSL (main) */
+    char error[256];           /* why it failed, when text is NULL */
 } dxso_shader;
 
 /* The parameters every shader gets in buffer 3. Kept in step with the MSL
- * declaration dxso.c writes. */
+ * and GLSL declarations dxso.c writes (the same layout under std140). */
 typedef struct {
     float half_pixel[2];       /* (-1 / viewport width, 1 / viewport height) */
     float alpha_ref;           /* 0..1 */

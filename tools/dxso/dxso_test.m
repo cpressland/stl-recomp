@@ -73,8 +73,8 @@ static id<MTLFunction> fn(const uint32_t *code, size_t n, const char *what) {
     dxso_shader s;
     if (dxso_translate(code, n, NULL, &s) != 0) { printf("  %s: not translated: %s\n", what, s.error); return nil; }
     NSError *e = nil;
-    id<MTLLibrary> lib = [g_dev newLibraryWithSource:[NSString stringWithUTF8String:s.msl] options:nil error:&e];
-    if (!lib) { printf("  %s: not compiled: %s\n%s\n", what, e.localizedDescription.UTF8String, s.msl); dxso_free(&s); return nil; }
+    id<MTLLibrary> lib = [g_dev newLibraryWithSource:[NSString stringWithUTF8String:s.text] options:nil error:&e];
+    if (!lib) { printf("  %s: not compiled: %s\n%s\n", what, e.localizedDescription.UTF8String, s.text); dxso_free(&s); return nil; }
     dxso_free(&s);
     return [lib newFunctionWithName:@"dxso_main"];
 }

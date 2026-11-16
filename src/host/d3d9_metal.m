@@ -527,7 +527,7 @@ static id<MTLFunction> shader(dev_t_ *d, uint32_t obj, int pixel) {
         return nil;
     }
     NSError *e = nil;
-    id<MTLLibrary> lib = [G->dev newLibraryWithSource:[NSString stringWithUTF8String:s.msl] options:nil error:&e];
+    id<MTLLibrary> lib = [G->dev newLibraryWithSource:[NSString stringWithUTF8String:s.text] options:nil error:&e];
     id<MTLFunction> f = [lib newFunctionWithName:@"dxso_main"];
     if (!f) {
         fprintf(stderr, "[metal] a shader does not compile: %s\n", e.localizedDescription.UTF8String);
@@ -535,10 +535,10 @@ static id<MTLFunction> shader(dev_t_ *d, uint32_t obj, int pixel) {
         dxso_free(&s);
         return nil;
     }
-    free(b->info.msl);
+    free(b->info.text);
     b->info = s;
-    b->info.msl = NULL;
-    free(s.msl);
+    b->info.text = NULL;
+    free(s.text);
     b->translated = 1;
     int slot = 0;
     while (slot < 4 && b->fn[slot]) slot++;

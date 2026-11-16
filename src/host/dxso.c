@@ -1,5 +1,6 @@
 /*
- * dxso.c - Direct3D 9 shader bytecode to Metal Shading Language (dxso.h).
+ * dxso.c - Direct3D 9 shader bytecode to Metal Shading Language, or GLSL
+ * for Vulkan (dxso.h).
  *
  * The bytecode is a version token, instructions, and an end token
  * (0x0000FFFF). An instruction token has its opcode in bits 0-15, controls
@@ -22,6 +23,14 @@
  * rasteriser has them: rsq of |x|, log of |x| with log(0) the most negative
  * float, lit's exponent clamped to +-128, vs_1_1's mov to a0 rounding down
  * and mova to nearest, ps_1_1's cnd on > 0.5, ps_1_x's r0 the colour.
+ *
+ * The body is written once, in MSL's spelling; for GLSL its type and
+ * function names are renamed (glsl_names: float4 vec4, rsqrt inversesqrt,
+ * ...; saturate and FLT_MAX are defined), and the few things GLSL says
+ * differently are written its way where they are made: comparisons of
+ * vectors (lessThan, not <), select (mix on a bool vector), sampling,
+ * discard, the bools. The declarations and the entry point are each
+ * language's own.
  */
 #include <stdarg.h>
 #include <stdio.h>
@@ -106,6 +115,7 @@ typedef struct {
     const uint32_t *w;
     size_t n, at;
     int ps, major, minor;
+    int glsl;
     const dxso_options *opt;
     dxso_shader *out;
     sb body;
@@ -212,7 +222,8 @@ static void reg_name(tr *t, uint32_t p, uint32_t rel, int has_rel, int is_dst, c
         snprintf(out, cap, "o_depth");
         return;
     case RT_CONSTBOOL:
-        snprintf(out, cap, "float4(cb[%d] ? 1.0 : 0.0)", n);
+        if (t->glsl) snprintf(out, cap, "float4(cb4[%d].%c != 0u ? 1.0 : 0.0)", (n >> 2) & 3, "xyzw"[n & 3]);
+        else snprintf(out, cap, "float4(cb[%d] ? 1.0 : 0.0)", n);
         return;
     case RT_LOOP:
         t->uses_aL = 1;
@@ -343,6 +354,11 @@ static void sample(tr *t, int s, const char *coords, int control, char *out, siz
     int type = t->out->sampler_type[s];
     if (t->opt && (t->opt->sampler_depth >> s) & 1) {
         /* A depth texture: a comparison against the coordinate's z (w-divided). */
+        if (t->glsl) {
+            snprintf(out, cap, "float4(texture(s%d, float3((%s).xy / (%s).w, (%s).z / (%s).w)))", s, coords, coords,
+                     coords, coords);
+            return;
+        }
         snprintf(out, cap, "float4(s%d.sample_compare(z%d, (%s).xy / (%s).w, (%s).z / (%s).w))", s, s, coords, coords,
                  coords, coords);
         return;
@@ -351,6 +367,12 @@ static void sample(tr *t, int s, const char *coords, int control, char *out, siz
     char c[700];
     if (control == 1) snprintf(c, sizeof c, "(%s).%s / (%s).w", coords, sw, coords);
     else snprintf(c, sizeof c, "(%s).%s", coords, sw);
+    if (t->glsl) {
+        if (control == 2) snprintf(out, cap, "texture(s%d, %s, (%s).w)", s, c, coords);
+        else if (control == 3) snprintf(out, cap, "textureLod(s%d, %s, (%s).w)", s, c, coords);
+        else snprintf(out, cap, "texture(s%d, %s)", s, c);
+        return;
+    }
     if (control == 2) snprintf(out, cap, "s%d.sample(z%d, %s, bias((%s).w))", s, s, c, coords);
     else if (control == 3) snprintf(out, cap, "s%d.sample(z%d, %s, level((%s).w))", s, s, c, coords);
     else snprintf(out, cap, "s%d.sample(z%d, %s)", s, s, c);
@@ -430,8 +452,8 @@ static size_t instruction(tr *t, size_t at) {
         case OP_MUL: snprintf(v, sizeof v, "(%s * %s)", s0.s, s1.s); break;
         case OP_MIN: snprintf(v, sizeof v, "min(%s, %s)", s0.s, s1.s); break;
         case OP_MAX: snprintf(v, sizeof v, "max(%s, %s)", s0.s, s1.s); break;
-        case OP_SLT: snprintf(v, sizeof v, "float4(%s < %s)", s0.s, s1.s); break;
-        case OP_SGE: snprintf(v, sizeof v, "float4(%s >= %s)", s0.s, s1.s); break;
+        case OP_SLT: snprintf(v, sizeof v, t->glsl ? "float4(lessThan(%s, %s))" : "float4(%s < %s)", s0.s, s1.s); break;
+        case OP_SGE: snprintf(v, sizeof v, t->glsl ? "float4(greaterThanEqual(%s, %s))" : "float4(%s >= %s)", s0.s, s1.s); break;
         case OP_DP3: snprintf(v, sizeof v, "float4(dot((%s).xyz, (%s).xyz))", s0.s, s1.s); break;
         case OP_DP4: snprintf(v, sizeof v, "float4(dot(%s, %s))", s0.s, s1.s); break;
         case OP_DST: snprintf(v, sizeof v, "float4(1.0, (%s).y * (%s).y, (%s).z, (%s).w)", s0.s, s1.s, s0.s, s1.s); break;
@@ -448,8 +470,14 @@ static size_t instruction(tr *t, size_t at) {
         switch (op) {
         case OP_MAD: snprintf(v, sizeof v, "(%s * %s + %s)", s0.s, s1.s, s2.s); break;
         case OP_LRP: snprintf(v, sizeof v, "mix(%s, %s, %s)", s2.s, s1.s, s0.s); break;
-        case OP_CND: snprintf(v, sizeof v, "select(%s, %s, %s > 0.5)", s2.s, s1.s, s0.s); break;
-        case OP_CMP: snprintf(v, sizeof v, "select(%s, %s, %s >= 0.0)", s2.s, s1.s, s0.s); break;
+        case OP_CND:
+            snprintf(v, sizeof v, t->glsl ? "mix(%s, %s, greaterThan(%s, float4(0.5)))" : "select(%s, %s, %s > 0.5)",
+                     s2.s, s1.s, s0.s);
+            break;
+        case OP_CMP:
+            snprintf(v, sizeof v, t->glsl ? "mix(%s, %s, greaterThanEqual(%s, float4(0.0)))" : "select(%s, %s, %s >= 0.0)",
+                     s2.s, s1.s, s0.s);
+            break;
         case OP_DP2ADD: snprintf(v, sizeof v, "float4(dot((%s).xy, (%s).xy) + (%s).x)", s0.s, s1.s, s2.s); break;
         }
         write_dst(t, &d, v);
@@ -515,7 +543,8 @@ static size_t instruction(tr *t, size_t at) {
         return next;
     case OP_TEXKILL:
         read_dst(t, &p, &d);
-        line(t, "if (any((%s).xyz < 0.0)) discard_fragment();", d.name);
+        if (t->glsl) line(t, "if (any(lessThan((%s).xyz, float3(0.0)))) discard;", d.name);
+        else line(t, "if (any((%s).xyz < 0.0)) discard_fragment();", d.name);
         return next;
     case OP_TEX:
         if (t->major < 2) {
@@ -683,12 +712,142 @@ static int pixel(tr *t, sb *o) {
     return 0;
 }
 
+/* ---- GLSL (Vulkan) ------------------------------------------------------ */
+
+/* The body's MSL names, as GLSL spells them (whole identifiers only). */
+static char *glsl_names(const char *in) {
+    static const char *const map[][2] = {
+        { "float4", "vec4" }, { "float3", "vec3" }, { "float2", "vec2" }, { "int4", "ivec4" }, { "bool4", "bvec4" },
+        { "rsqrt", "inversesqrt" }, { "rint", "roundEven" }, { "dfdx", "dFdx" }, { "dfdy", "dFdy" },
+    };
+    sb o = { 0 };
+    sb_add(&o, "%s", "");
+    for (const char *p = in ? in : ""; *p;) {
+        if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || *p == '_') {
+            const char *q = p;
+            while ((*q >= 'A' && *q <= 'Z') || (*q >= 'a' && *q <= 'z') || (*q >= '0' && *q <= '9') || *q == '_') q++;
+            const char *name = NULL;
+            for (size_t i = 0; i < sizeof map / sizeof *map && !name; i++)
+                if (strlen(map[i][0]) == (size_t)(q - p) && !strncmp(p, map[i][0], (size_t)(q - p))) name = map[i][1];
+            if (name) sb_add(&o, "%s", name);
+            else sb_add(&o, "%.*s", (int)(q - p), p);
+            p = q;
+        } else if (*p >= '0' && *p <= '9') {                 /* a number, its exponent's e included */
+            const char *q = p;
+            while ((*q >= '0' && *q <= '9') || *q == '.' || *q == 'e' || *q == 'E' ||
+                   ((*q == '+' || *q == '-') && (q[-1] == 'e' || q[-1] == 'E')))
+                q++;
+            sb_add(&o, "%.*s", (int)(q - p), p);
+            p = q;
+        } else {
+            sb_add(&o, "%c", *p++);
+        }
+    }
+    return o.p;
+}
+
+/* "vec4 name[n]" zeroed, as a declaration's initialiser. */
+static void glsl_zeros(sb *o, const char *name, int n) {
+    sb_add(o, "    vec4 %s[%d] = vec4[%d](", name, n, n);
+    for (int i = 0; i < n; i++) sb_add(o, "%svec4(0.0)", i ? ", " : "");
+    sb_add(o, ");\n");
+}
+
+static void glsl_head(tr *t, sb *o) {
+    int b = t->ps ? 4 : 0;
+    const char *st = t->ps ? "ps" : "vs";
+    sb_add(o, "#version 450\n\n");
+    sb_add(o, "const float FLT_MAX = 3.402823466e+38;\n");
+    sb_add(o, "float saturate(float x) { return clamp(x, 0.0, 1.0); }\n");
+    sb_add(o, "vec2 saturate(vec2 x) { return clamp(x, 0.0, 1.0); }\n");
+    sb_add(o, "vec3 saturate(vec3 x) { return clamp(x, 0.0, 1.0); }\n");
+    sb_add(o, "vec4 saturate(vec4 x) { return clamp(x, 0.0, 1.0); }\n\n");
+    sb_add(o, "layout(set = 0, binding = %d, std140) uniform dxso_%s_c { vec4 c[%d]; };\n", b, st, t->ps ? 224 : 256);
+    sb_add(o, "layout(set = 0, binding = %d, std140) uniform dxso_%s_ci { ivec4 ci[16]; };\n", b + 1, st);
+    sb_add(o, "layout(set = 0, binding = %d, std140) uniform dxso_%s_cb { uvec4 cb4[4]; };\n", b + 2, st);
+    sb_add(o, "layout(set = 0, binding = %d, std140) uniform dxso_%s_params {\n"
+              "    vec2 half_pixel; float alpha_ref; uint alpha_func; vec4 fog_color; uint fog_enable; uint pad0, pad1, pad2;\n"
+              "} P;\n\n", b + 3, st);
+    const char *dir = t->ps ? "in" : "out";
+    sb_add(o, "layout(location = 0) %s vec4 dx_d0;\nlayout(location = 1) %s vec4 dx_d1;\n", dir, dir);
+    for (int i = 0; i < 8; i++) sb_add(o, "layout(location = %d) %s vec4 dx_t%d;\n", 2 + i, dir, i);
+    sb_add(o, "layout(location = 10) %s float dx_fog;\n\n", dir);
+}
+
+static void glsl_locals(tr *t, sb *o) {
+    glsl_zeros(o, "r", t->max_temp + 1);
+    if (t->uses_a0) sb_add(o, "    ivec4 a0 = ivec4(0);\n");
+    if (t->uses_aL) sb_add(o, "    int aL = 0;\n");
+    if (t->uses_p0) sb_add(o, "    bvec4 p0 = bvec4(false);\n");
+}
+
+static void glsl_vertex(tr *t, sb *o, const char *body) {
+    for (int i = 0; i < DXSO_MAX_INPUTS; i++)
+        if (t->out->input_usage[i] != 0xFF) sb_add(o, "layout(location = %d) in vec4 v_in%d;\n", i, i);
+    sb_add(o, "\nvoid main()\n{\n");
+    glsl_locals(t, o);
+    glsl_zeros(o, "v", t->max_v + 1);
+    for (int i = 0; i < DXSO_MAX_INPUTS; i++)
+        if (t->out->input_usage[i] != 0xFF) sb_add(o, "    v[%d] = v_in%d;\n", i, i);
+    sb_add(o, "    vec4 o_pos = vec4(0.0, 0.0, 0.0, 1.0);\n");
+    glsl_zeros(o, "o_d", 2);
+    glsl_zeros(o, "o_t", 8);
+    sb_add(o, "    float o_fog = 1.0, o_pts = 1.0;\n");
+    sb_add(o, "%s", body);
+    sb_add(o, "    gl_Position = o_pos;\n");
+    sb_add(o, "    gl_Position.xy += P.half_pixel * o_pos.w;    /* D3D9's pixel centres */\n");
+    sb_add(o, "    dx_d0 = saturate(o_d[0]); dx_d1 = saturate(o_d[1]);   /* D3D9 clamps the colours */\n");
+    for (int i = 0; i < 8; i++) sb_add(o, "    dx_t%d = o_t[%d];\n", i, i);
+    sb_add(o, "    dx_fog = o_fog;\n}\n");
+}
+
+static void glsl_pixel(tr *t, sb *o, const char *body) {
+    int sm1 = t->major < 2;
+    int ncol = sm1 ? 1 : t->max_oc + 1;
+    if (ncol < 1) ncol = 1;
+    for (int s = 0; s < 16; s++) {
+        if (!((t->out->samplers_used >> s) & 1)) continue;
+        const char *ty = t->opt && (t->opt->sampler_depth >> s) & 1 ? "sampler2DShadow"
+                       : t->out->sampler_type[s] == DXSO_TEX_CUBE ? "samplerCube"
+                       : t->out->sampler_type[s] == DXSO_TEX_3D ? "sampler3D" : "sampler2D";
+        sb_add(o, "layout(set = 0, binding = %d) uniform %s s%d;\n", 8 + s, ty, s);
+    }
+    for (int i = 0; i < ncol; i++) sb_add(o, "layout(location = %d) out vec4 dx_c%d;\n", i, i);
+    sb_add(o, "\nvoid main()\n{\n");
+    glsl_locals(t, o);
+    sb_add(o, "    vec4 vd[2] = vec4[2](dx_d0, dx_d1);\n");
+    sb_add(o, "    vec4 tin[8] = vec4[8](dx_t0, dx_t1, dx_t2, dx_t3, dx_t4, dx_t5, dx_t6, dx_t7);\n");
+    sb_add(o, "    vec4 t[8] = tin;\n");
+    glsl_zeros(o, "o_c", ncol);
+    sb_add(o, "    float o_depth = gl_FragCoord.z;\n");
+    if (t->uses_vpos) sb_add(o, "    vec4 vpos = vec4(gl_FragCoord.xy - 0.5, 0.0, 0.0);\n");
+    if (t->uses_vface) sb_add(o, "    vec4 vface = vec4(gl_FrontFacing ? 1.0 : -1.0);\n");
+    sb_add(o, "%s", body);
+    if (sm1) sb_add(o, "    o_c[0] = r[0];                                 /* ps_1_x: r0 is the colour */\n");
+    sb_add(o, "    vec4 col = o_c[0];\n");
+    sb_add(o, "    switch (int(P.alpha_func)) {                   /* the alpha test (D3DCMP_*) */\n"
+              "    case 1: discard;\n"
+              "    case 2: if (!(col.a <  P.alpha_ref)) discard; break;\n"
+              "    case 3: if (!(col.a == P.alpha_ref)) discard; break;\n"
+              "    case 4: if (!(col.a <= P.alpha_ref)) discard; break;\n"
+              "    case 5: if (!(col.a >  P.alpha_ref)) discard; break;\n"
+              "    case 6: if (!(col.a != P.alpha_ref)) discard; break;\n"
+              "    case 7: if (!(col.a >= P.alpha_ref)) discard; break;\n"
+              "    default: break;\n    }\n");
+    sb_add(o, "    if (P.fog_enable != 0u) col.rgb = mix(P.fog_color.rgb, col.rgb, saturate(dx_fog));\n");
+    sb_add(o, "    dx_c0 = col;\n");
+    for (int i = 1; i < ncol; i++) sb_add(o, "    dx_c%d = o_c[%d];\n", i, i);
+    if (t->uses_depth_out) sb_add(o, "    gl_FragDepth = o_depth;\n");
+    sb_add(o, "}\n");
+}
+
 int dxso_translate(const uint32_t *code, size_t words, const dxso_options *opt, dxso_shader *out) {
     memset(out, 0, sizeof *out);
     memset(out->input_usage, 0xFF, sizeof out->input_usage);
     if (!code || words < 2) { snprintf(out->error, sizeof out->error, "no bytecode"); return -1; }
     tr *t = calloc(1, sizeof *t);
     t->w = code, t->n = words, t->opt = opt, t->out = out;
+    t->glsl = opt && opt->lang == DXSO_GLSL;
     uint32_t ver = code[0];
     t->ps = (ver >> 16) == 0xFFFF;
     if (!t->ps && (ver >> 16) != 0xFFFE) { snprintf(out->error, sizeof out->error, "not a shader (0x%08X)", ver); free(t); return -1; }
@@ -708,9 +867,16 @@ int dxso_translate(const uint32_t *code, size_t words, const dxso_options *opt, 
     if (t->depth != 0 && !t->failed) fail(t, "unbalanced flow control");
     if (!t->failed) {
         sb o = { 0 };
-        head(t, &o);
-        if (t->ps) pixel(t, &o); else vertex(t, &o);
-        out->msl = o.p;
+        if (t->glsl) {
+            char *body = glsl_names(t->body.p);
+            glsl_head(t, &o);
+            if (t->ps) glsl_pixel(t, &o, body); else glsl_vertex(t, &o, body);
+            free(body);
+        } else {
+            head(t, &o);
+            if (t->ps) pixel(t, &o); else vertex(t, &o);
+        }
+        out->text = o.p;
     }
     free(t->body.p);
     int rc = t->failed ? -1 : 0;
@@ -719,6 +885,6 @@ int dxso_translate(const uint32_t *code, size_t words, const dxso_options *opt, 
 }
 
 void dxso_free(dxso_shader *s) {
-    free(s->msl);
-    s->msl = NULL;
+    free(s->text);
+    s->text = NULL;
 }

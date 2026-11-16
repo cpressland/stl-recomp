@@ -34,15 +34,15 @@ static int check(id<MTLDevice> dev, const char *path, int *untranslated, int *un
         free(w);
         return 1;
     }
-    if (verbose) printf("---- %s (%s_%d_%d)\n%s\n", path, s.pixel ? "ps" : "vs", s.major, s.minor, s.msl);
+    if (verbose) printf("---- %s (%s_%d_%d)\n%s\n", path, s.pixel ? "ps" : "vs", s.major, s.minor, s.text);
     NSError *err = nil;
     MTLCompileOptions *o = [MTLCompileOptions new];
-    id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:s.msl] options:o error:&err];
+    id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:s.text] options:o error:&err];
     int bad = !lib || ![lib newFunctionWithName:@"dxso_main"];
     if (bad) {
         printf("UNCOMPILED %s (%s_%d_%d):\n%s\n", path, s.pixel ? "ps" : "vs", s.major, s.minor,
                err ? err.localizedDescription.UTF8String : "no dxso_main");
-        if (!verbose) printf("%s\n", s.msl);
+        if (!verbose) printf("%s\n", s.text);
         (*uncompiled)++;
     }
     dxso_free(&s);

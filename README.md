@@ -201,8 +201,11 @@ bases (the missions' scripts attached when the game loads them) and binds them t
 msvcr71) and to win32hle; `wide.c` the Unicode calls; `shims.c` the rest
 win32hle lacks; `setjmp.c` D3DX's `setjmp`/`longjmp` on eh32's landing
 pads; `d3d9.c` Direct3D 9's interfaces and state, `d3d9_metal.m` the same
-on Metal, `dxso.c` the shaders (D3D9 bytecode to Metal Shading Language,
-checked by `tools/dxso`); `cpu.c` the CPU it reports (a Pentium III);
+on Metal (`d3d9_null.c` nothing, off the Mac, until the Vulkan one),
+`dxso.c` the shaders (D3D9 bytecode to Metal Shading Language, or to GLSL
+for Vulkan; `tools/dxso/build.sh`, then `work/dxso_check work/shaders` and
+`work/dxso_glsl work/shaders` compile every dumped shader both ways);
+`cpu.c` the CPU it reports (a Pentium III);
 `script.c` scripted input.
 
 ## Releases

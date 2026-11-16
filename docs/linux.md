@@ -31,6 +31,17 @@ an AppImage) that carries the build's tools and none of the game.
 2. **dxso to GLSL.** A second backend in `dxso.c`, the same fixed varyings
    and buffers; the shader corpus (`STL_DUMP_SHADERS`) all compiling to
    SPIR-V with `glslangValidator` (`tools/dxso`), on the Deck or a Mac.
+   **Done (2026-11-16):** `dxso_options.lang = DXSO_GLSL`. The instruction
+   walk is shared: the body is written in MSL's spelling and renamed
+   (`float4` `vec4`, `rsqrt` `inversesqrt`, ...), with GLSL's own forms
+   where it differs (vector comparisons, `select` as `mix`, sampling,
+   `discard`, the bools as `uvec4[4]`). The bindings are in `dxso.h`.
+   `work/dxso_glsl` compiles all 97 dumped shaders (vs_1_1, vs_2_0, ps_1_1,
+   ps_1_2, ps_2_0) to SPIR-V for Vulkan 1.3, here with spirv-val and on the
+   Deck with the SDK's glslang; `-depth`, `-cube` and `-3d` force the
+   texture kinds a dump cannot show (shadow comparisons, ps_1_x's cube and
+   volume stages), and they compile too. The Vulkan side must flip y with a
+   negative viewport height and choose the front face to match.
 3. **`d3d9_vulkan.c`.** Device, render passes as dynamic rendering, the
    ring of dynamic data, textures and format conversions, pipelines and
    their caches, samplers, clears, StretchRect, readback and shots, and
