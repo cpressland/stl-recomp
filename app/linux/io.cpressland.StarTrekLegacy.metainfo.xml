@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.cpressland.StarTrekLegacy</id>
+  <name>Star Trek: Legacy</name>
+  <summary>The 2006 starship strategy game, recompiled to run natively</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.cpressland">
+    <name>Chris Pressland</name>
+  </developer>
+  <description>
+    <p>
+      A static recompilation of Star Trek: Legacy 1.2: the original game's
+      code translated to C and compiled for this computer, with Windows'
+      parts answered natively and Direct3D 9 drawn through Vulkan. No
+      emulator, no Wine.
+    </p>
+    <p>
+      The first time it runs, it downloads the game's disc image and its 1.2
+      patch and builds the game from them, which takes 15 minutes on a fast
+      computer and about an hour on a Steam Deck.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.cpressland.StarTrekLegacy.desktop</launchable>
+  <url type="homepage">https://github.com/cpressland/stl-recomp</url>
+  <url type="bugtracker">https://github.com/cpressland/stl-recomp/issues</url>
+  <url type="vcs-browser">https://github.com/cpressland/stl-recomp</url>
+  <!-- The launcher's own screens only: the game's are its publisher's art. -->
+  <screenshots>
+    <screenshot type="default">
+      <caption>The first run downloads the game and builds it</caption>
+      <image>https://raw.githubusercontent.com/cpressland/stl-recomp/main/app/linux/screenshots/setup.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Building the game on this computer</caption>
+      <image>https://raw.githubusercontent.com/cpressland/stl-recomp/main/app/linux/screenshots/building.png</image>
+    </screenshot>
+  </screenshots>
+  <branding>
+    <color type="primary" scheme_preference="light">#4a7fc0</color>
+    <color type="primary" scheme_preference="dark">#1c1438</color>
+  </branding>
+  <content_rating type="oars-1.1">
+    <content_attribute id="violence-fantasy">mild</content_attribute>
+  </content_rating>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>gamepad</control>
+  </supports>
+  <releases>
+    <release version="{version}" date="{date}"/>
+  </releases>
+</component>

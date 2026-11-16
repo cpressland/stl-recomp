@@ -2,7 +2,8 @@
 
 A static recompilation of Mad Doc Software's **Star Trek: Legacy** (Bethesda,
 2006), version 1.2, from its shipping Win32 binaries to native C, targeting
-**macOS** with a Metal renderer. Built on the
+**macOS** with a Metal renderer and **Linux** (the Steam Deck among them)
+with a Vulkan one. Built on the
 [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain and its
 `runtime/win32hle`, the same way as
 [tpw-recomp](https://github.com/cpressland/tpw-recomp).
@@ -238,6 +239,28 @@ it. To try a release locally:
 ```
 SPARKLE_PRIVATE_KEY="$(security find-generic-password -s https://sparkle-project.org -a stl-recomp -w)" VERSION=0.0.1 app/release.sh
 ```
+
+### Linux: the Flatpak
+
+`app/linux` is the Flatpak, made as tpw-recomp's is
+([docs/linux.md](docs/linux.md)): `io.cpressland.StarTrekLegacy`, on the
+freedesktop SDK 26.08, carrying a launcher (`launcher.c`, SDL, made for a
+controller as much as a mouse), the installer and the sources it builds
+from, and the lift's Python packages: none of the game. Its first run
+downloads the disc image and the patch and builds the game into
+`~/.var/app/io.cpressland.StarTrekLegacy/data/star-trek-legacy` (about an
+hour on a Steam Deck); the runtime brings the rest (gcc, ffmpeg's Bink
+decoders, the Vulkan loader, shaderc). To build and try one:
+
+```
+app/linux/build-flatpak.sh OUT        # flatpak-builder: OUT/repo
+flatpak --user remote-add --no-gpg-verify stl-local OUT/repo
+flatpak --user install stl-local io.cpressland.StarTrekLegacy
+```
+
+A tag also runs `.github/workflows/flatpak.yml`: x86-64 and arm64 builds,
+attached to the `flatpak` release, which cpressland/flatpak signs and
+publishes at flatpak.cpressland.io once its `apps.json` lists the app.
 
 ## pcrecomp: pending merges
 

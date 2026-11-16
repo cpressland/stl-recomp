@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Star Trek: Legacy
+Comment=Command Starfleet's ships across five eras
+Exec=star-trek-legacy
+Icon=io.cpressland.StarTrekLegacy
+Terminal=false
+Categories=Game;StrategyGame;
+Keywords=star;trek;space;starship;strategy;

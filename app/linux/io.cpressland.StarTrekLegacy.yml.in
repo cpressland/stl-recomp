@@ -1,0 +1,112 @@
+# Star Trek: Legacy for Linux, as a Flatpak: the launcher (launcher.c), the
+# installer and the sources it builds the game from, and the Python packages
+# the lift needs. None of the game: it is downloaded and built on the
+# player's computer, as on a Mac.
+#
+# The runtime is the freedesktop SDK, not the Platform, because the player's
+# computer compiles the game: gcc, CMake, Ninja, pkg-config and Python come
+# with it, and so do what the game uses as it runs: ffmpeg (its Bink demuxer
+# and decoders, for the movies), the Vulkan loader and shaderc (the game's
+# shaders, compiled as they come; src/host/d3d9_vulkan.c). build-flatpak.sh fills in the @...@ values.
+app-id: io.cpressland.StarTrekLegacy
+runtime: org.freedesktop.Sdk
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: star-trek-legacy
+finish-args:
+  - --share=network            # the disc image and the patch (files.cpressland.io)
+  - --share=ipc
+  - --socket=x11               # the host's mouse handling is X11's (Xwayland on Wayland desktops)
+  - --socket=pulseaudio
+  - --device=all               # the GPU (Vulkan), and controllers
+  # The player's compile finds SDL2_ttf in /app: pkg-config names it, but the
+  # SDK's pkgconf counts /app/include and /app/lib as system folders and
+  # leaves them out, which gcc searches only with these.
+  - --env=PKG_CONFIG_PATH=/app/lib/pkgconfig
+  - --env=C_INCLUDE_PATH=/app/include
+  - --env=LIBRARY_PATH=/app/lib
+modules:
+  # The runtime's SDL2 is sdl2-compat (on SDL3), whose pkg-config name is
+  # sdl2-compat: sdl2 is what SDL2_ttf and the game's CMakeLists ask for.
+  - name: sdl2-pc
+    buildsystem: simple
+    build-commands:
+      - install -d /app/lib/pkgconfig
+      - |
+        printf 'Name: sdl2\nDescription: SDL2 (sdl2-compat)\nVersion: %s\nRequires: sdl2-compat\n' \
+          "$(pkg-config --modversion sdl2-compat)" > /app/lib/pkgconfig/sdl2.pc
+
+  - name: SDL2_ttf
+    buildsystem: cmake-ninja
+    builddir: true                 # it refuses an in-tree build
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib      # not lib64: where PKG_CONFIG_PATH looks
+      - -DSDL2TTF_VENDORED=OFF
+      - -DSDL2TTF_HARFBUZZ=ON
+      - -DSDL2TTF_SAMPLES=OFF
+    sources:
+      - type: archive
+        url: https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.24.0/SDL2_ttf-2.24.0.tar.gz
+        sha256: 0b2bf1e7b6568adbdbc9bb924643f79d9dedafe061fa1ed687d1d9ac4e453bfd
+    cleanup:
+      - /lib/cmake
+
+  # The disc's and the lift's packages (app/requirements.txt, less CMake and
+  # Ninja, which the SDK has), in a venv of the runtime's Python.
+  - name: python-packages
+    buildsystem: simple
+    build-commands:
+      - python3 -m venv /app/venv
+      - /app/venv/bin/pip install --no-index --no-deps --no-cache-dir *.whl
+    cleanup:
+      - /venv/bin/pip*                                 # pip only installs them: the player's build never uses it
+      - /venv/lib/python*/site-packages/pip
+      - /venv/lib/python*/site-packages/pip-*
+      - /venv/lib/python*/site-packages/unicorn/lib/*.a # 30 MB; Python loads libunicorn.so
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/17/d3/b64c356a907242d719fc668b71befd73324e47ab46c8ebbbede252c154b2/olefile-0.47-py2.py3-none-any.whl
+        sha256: 543c7da2a7adadf21214938bb79c83ea12b473a4b6ee4ad4bf854e7715e13d1f
+      - type: file
+        url: https://files.pythonhosted.org/packages/54/16/12b82f791c7f50ddec566873d5bdd245baa1491bac11d15ffb98aecc8f8b/pefile-2024.8.26-py3-none-any.whl
+        sha256: 76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f
+      - type: file
+        only-arches: [x86_64]
+        url: https://files.pythonhosted.org/packages/d1/39/17747862222bb062e86b501f1f148d5ff589b77908b080d30f7f085cbfb7/capstone-5.0.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+        sha256: 273fd8d747d2e35c88f91450be51a603ecfaafb00d96d9f315dcb8689c86193e
+      - type: file
+        only-arches: [aarch64]
+        url: https://files.pythonhosted.org/packages/45/d9/dbeadb9fcd461e608ce79b1cb647fed6baa812fa6e1c68b0ba5ef81291af/capstone-5.0.9-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
+        sha256: 41772ad0c71aa5d3e97d541e802593c2e71fb94ac7e20d4202f97ce2a3eb8ed5
+      - type: file
+        only-arches: [x86_64]
+        url: https://files.pythonhosted.org/packages/e7/df/ded5e3684c2d7600b30cc8a7530277b8cb36644a1a9d34cade7ebb45604c/unicorn-2.1.4-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+        sha256: 9d6e6dea140560de4ebd8446661f7ef84a357d428c14a3ef09dacd306ec8c239
+      - type: file
+        only-arches: [aarch64]
+        url: https://files.pythonhosted.org/packages/33/9f/32d41eb942221bcf4417cdc65537fc8b3bbbd6079d6c161e621f1dd4e94a/unicorn-2.1.4-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
+        sha256: bd1fb0c9af5f57e356d8a96928b4fe045b2e18f308ef23b481d5f970008aa722
+
+  # This repository at one commit (only what is checked in: never the game)
+  # and pcrecomp at app/pcrecomp.lock's.
+  - name: star-trek-legacy
+    buildsystem: simple
+    build-commands:
+      - /app/venv/bin/python3 -I tools/install/install.py --export-sources /app/share/star-trek-legacy/src --pcrecomp pcrecomp
+      - gcc -O2 -Wall -DSTL_VERSION='"@VERSION@"' app/linux/launcher.c
+          $(pkg-config --cflags --libs sdl2 SDL2_ttf) -o star-trek-legacy
+      - install -Dm755 star-trek-legacy -t /app/bin
+      - install -Dm644 app/linux/io.cpressland.StarTrekLegacy.desktop -t /app/share/applications
+      - install -d /app/share/metainfo
+      - sed -e 's/{version}/@VERSION@/' -e 's/{date}/@DATE@/' app/linux/io.cpressland.StarTrekLegacy.metainfo.xml
+          > /app/share/metainfo/io.cpressland.StarTrekLegacy.metainfo.xml
+      - install -Dm644 app/linux/icon-512.png /app/share/icons/hicolor/512x512/apps/io.cpressland.StarTrekLegacy.png
+    sources:
+      - type: git
+        path: @REPO@
+        commit: @COMMIT@
+      - type: git
+        url: https://github.com/@PCRECOMP_REPOSITORY@.git
+        commit: @PCRECOMP_REF@
+        dest: pcrecomp

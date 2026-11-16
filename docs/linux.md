@@ -65,6 +65,20 @@ an AppImage) that carries the build's tools and none of the game.
    smoke test), points' size, vertex textures, GPU objects freed when the
    game releases them, a pipeline cache kept on disk.
 4. **The Flatpak**, from tpw-recomp's manifest and launcher, and its CI.
+   **Done (2026-11-16):** `app/linux` (`io.cpressland.StarTrekLegacy`) and
+   `.github/workflows/flatpak.yml`, tpw-recomp's with this game's names, its
+   setup words (2.2 GB, about an hour on a Deck, 8 GB) and the icon's deep
+   space for colours; olefile joins the Python packages, and the sources
+   are exported with the app's own Python (the installer imports olefile).
+   No ffmpeg module after all: the freedesktop runtime's ffmpeg has the
+   Bink demuxer and decoders, and the movies play. Built on the Deck with
+   flatpak-builder (org.flatpak.Builder) and installed from that
+   repository: the app's installer rebuilt the host, the smoke test passed
+   inside the app (Vulkan, the movies), and the launcher's screens draw
+   (`STL_LAUNCHER_SHOT`; two are the store's screenshots). Not yet: a
+   first run's download through the launcher on the Deck (the installer's
+   `--download`, as the Mac app uses it), and cpressland/flatpak's
+   `apps.json` listing the app, which publishing waits for.
 5. **The AppImage**, if wanted.
 
 ## The Deck
