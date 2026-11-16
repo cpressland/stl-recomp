@@ -127,7 +127,7 @@ The game draws at most 60 frames a second, each held to the display's
 refresh (2 refreshes on a 120 Hz display), and waits rather than spins
 in between: on Windows its monitor's refresh held it, and uncapped it drew
 nearly 500 a second for the same picture. `HLE_MAX_FPS=N` sets another cap
-(0 for none).
+(0: the display's own refresh, 120 a second on a 120 Hz one).
 
 `--resolution WxH` picks the display mode (any size from 640x480, widescreen
 and ultrawide included), `native` the Mac's own (its desktop size), and
