@@ -123,6 +123,12 @@ or the power wheel (E) goes on past the window's edge, as on Windows; the
 game draws its own cursor. `--free-mouse` turns that off: the pointer
 leaves the picture freely, and the camera stops turning at the edge.
 
+A game controller (an Xbox pad, a PlayStation pad, a Steam Deck's
+controls: anything SDL knows as one) is the game's, as an Xbox 360 pad is
+on Windows: the game's own controller support does the rest, the menus
+included (Options, Game/Controls has its settings). The game looks for one
+as it starts, so plug it in first. `--no-pad` leaves controllers alone.
+
 The game draws at most 60 frames a second, each held to the display's
 refresh (2 refreshes on a 120 Hz display), and waits rather than spins
 in between: on Windows its monitor's refresh held it, and uncapped it drew
@@ -161,6 +167,10 @@ wheel), and `--rel dx,dy@s` for the mouse moved by dx, dy (as in the window,
 where the mouse is held as relative motion: the camera turns past the edge),
 at `s` seconds from the start, in the game's 1024x768; `--quit @s` closes the
 window, as its close button does.
+
+`STL_VPAD=FILE` gives the game a virtual controller, driven by FILE: lines
+`seconds control value` (`a b x y back start ls rs lb rb up down left
+right`, 0 or 1; `lx ly rx ry lt rt`, -1 to 1).
 
 `--shot FILE.bmp` saves the screen 10 seconds in (`--shot-after S` for
 another time), and with `--shot-every S` every S seconds after that, as
@@ -250,6 +260,7 @@ and the rest) and this game's own, one commit each on top:
 | `disasm32-decode-cache` | disasm32 decodes each address once (its JSON CLI) | No, but the first build's analysis takes 21 minutes without it, 4 with |
 | `win32hle-dinput-relative-shared` | a host can give a non-exclusive DirectInput mouse movement alone (`hle_dinput_relative_shared`) | **Yes**: the camera turns past the window's edge |
 | `win32hle-screen-flip` | `hle_screen_flip`: a host renderer's frame shown and paced as a DirectDraw flip | **Yes**: the frame rate is held near 60 (`HLE_MAX_FPS`) |
+| `win32hle-dinput-pad` | a game controller in DirectInput, as Windows shows an Xbox 360 pad (`hle_input_pad`) | **Yes**: the game's own controller support |
 
 To make a new lock (after one of these changes, or when `tpw` moves),
 cherry-pick these commits onto the fork's `tpw` in that order, push the

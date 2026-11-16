@@ -38,7 +38,9 @@ int  stl_free_library(uint32_t base);          /* 1 if base was one (and it is f
 void stl_cpuid(void);
 int  stl_mode(uint32_t *w, uint32_t *h);                            /* main.c: the display mode kept, if any */
 void stl_mode_used(uint32_t w, uint32_t h);                         /* ...the game chose this one */
-int  stl_shot_take(char *out, size_t n);                            /* main.c: a screenshot wanted now (--shot), its path */
+int  stl_shot_take(char *out, size_t n);
+void stl_pad_start(void);                                           /* pad.c: a game controller, before the game runs */
+void stl_pad_poll(void);                                            /* ...and each frame (Present) */                            /* main.c: a screenshot wanted now (--shot), its path */
 void stl_pump(void);                                                /* main.c: SDL's events, on the main thread */                                               /* cpu.c */
 
 extern const win32hle_shim stl_shims[];                             /* shims.c */

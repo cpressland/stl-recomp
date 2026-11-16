@@ -32,6 +32,7 @@ int stl_headless;
 #define g_headless stl_headless
 static int g_windowed;
 static int g_free_mouse;                 /* --free-mouse: the pointer may leave the picture */
+static int g_no_pad;                     /* --no-pad: game controllers left alone */
 
 /* --shot FILE.bmp: the screen (the back buffer, as d3d9.c presents it),
  * --shot-after S seconds in (default 10), and with --shot-every S again
@@ -216,6 +217,7 @@ static void usage(void) {
            "  --headless   no window, no sound device\n"
            "  --resolution WxH|native|options   the display mode, kept for later runs (options: the game's own)\n"
            "  --windowed   in a window (F11 toggles); --free-mouse: the mouse is not held in the picture\n"
+           "  --no-pad     game controllers left alone (else the first is the game's, as an Xbox 360 pad)\n"
            "  --shot FILE.bmp [--shot-after S] [--shot-every S]   the screen, S seconds in (default 10), and again\n"
            "  --watchdog S stop after S seconds, saying where the game was\n"
            "  --trace      every import call, as it is made\n"
@@ -235,6 +237,7 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--headless")) g_headless = 1;
         else if (!strcmp(argv[i], "--windowed")) g_windowed = 1;
         else if (!strcmp(argv[i], "--free-mouse")) g_free_mouse = 1;
+        else if (!strcmp(argv[i], "--no-pad")) g_no_pad = 1;
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) {
             static char path[PATH_MAX];
             const char *s = argv[++i];
@@ -311,6 +314,7 @@ __attribute__((visibility("default"))) int stl_main(int argc, char **argv) {
     if (!g_free_mouse) hle_dinput_relative_shared(1);
     else hle_screen_confine(0);                         /* the pointer goes where it likes; the camera stops at the edge */
     if (hle_screen_open(STL_TITLE, !g_windowed, g_headless) != 0) return 1;
+    if (!g_no_pad) stl_pad_start();                     /* before the game looks for one */
     /* The game pumps its window's messages on a thread of its own, and
      * AppKit takes events on the main thread only: SDL is pumped there (at
      * each Present, d3d9.c, and when the main thread waits for messages

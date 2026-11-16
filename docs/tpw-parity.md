@@ -130,6 +130,12 @@ stl-recomp's build looks for pcrecomp beside it (`../pcrecomp`), so from
    The same windowed minute: 490 frames a second at 118% of a core before,
    60 at 40% after, held 2 refreshes of the 120 Hz display, none late.
    `HLE_MAX_FPS` changes the cap; headless runs stay unpaced.
-3. XInput from SDL's game controllers.
+3. ~~XInput from SDL's game controllers.~~ Done (2026-11-16), and not
+   XInput: the game never loads it. It looks for a controller through
+   DirectInput 8 (EnumDevices, game controllers) and reads it as Windows
+   shows an Xbox 360 pad (DIJOYSTATE2, axes -100..100). pcrecomp's
+   `win32hle-dinput-pad` gives DirectInput that pad, and `src/host/pad.c`
+   feeds it from SDL's GameController (`STL_VPAD=FILE` for a virtual one).
+   A virtual pad's d-pad and A took the main menu to Options.
 4. Then the list above resumes: tests of every mission, upstream PRs,
    Linux (now with a D3D9 Vulkan backend to write), tracing.

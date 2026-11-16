@@ -491,6 +491,7 @@ static void v_Present(void) {
     shots(d);
     gpu_present(d);
     if (!stl_headless) stl_pump();                      /* the window's events: here, on the main thread */
+    stl_pad_poll();                                     /* the controller, for DirectInput's next read */
     if (g_frames % 600 == 0) fprintf(stderr, "[d3d9] %llu frames\n", (unsigned long long)g_frames);
     RET(D3D_OK, 5);
 }
