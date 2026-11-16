@@ -27,7 +27,15 @@ ditto -c -k --sequesterRsrc --keepParent "$APP" "$R/$NAME-$VERSION.zip"
 stage=$(mktemp -d)
 ditto "$APP" "$stage/Star Trek Legacy.app"
 ln -s /Applications "$stage/Applications"
-hdiutil create -quiet -volname "Star Trek Legacy" -srcfolder "$stage" -fs APFS -format ULMO "$R/$NAME-$VERSION.dmg"
+# hdiutil fails now and then on a CI runner with nothing said (a stalled
+# diskimages-helper): tried three times, a pause between.
+for try in 1 2 3; do
+  rm -f "$R/$NAME-$VERSION.dmg"
+  hdiutil create -quiet -volname "Star Trek Legacy" -srcfolder "$stage" -fs APFS -format ULMO "$R/$NAME-$VERSION.dmg" && break
+  [ "$try" = 3 ] && { echo "hdiutil create failed three times" >&2; exit 1; }
+  echo "hdiutil create failed (try $try); again in 10 s" >&2
+  sleep 10
+done
 rm -rf "$stage"
 # Names that stay put, for releases/latest/download/... links.
 cp "$R/$NAME-$VERSION.zip" "$R/$NAME.zip"
