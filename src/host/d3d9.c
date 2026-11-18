@@ -66,7 +66,7 @@ OK_N(0) OK_N(1) OK_N(2) OK_N(3) OK_N(4) OK_N(5) OK_N(6) OK_N(8)
 
 /* ---- objects: the records are in d3d9_int.h ---------------------------------- */
 
-static uint32_t g_vt_d3d, g_vt_dev, g_vt_tex, g_vt_cube, g_vt_vol, g_vt_surf,
+static uint32_t g_vt_d3d, g_vt_dev, g_vt_tex, g_vt_cube, g_vt_vol, g_vt_volume, g_vt_surf,
                 g_vt_vb, g_vt_ib, g_vt_decl, g_vt_vs, g_vt_ps, g_vt_query, g_vt_sb;
 
 static uint32_t make(uint32_t vt, uint32_t rec_size, void **rec) {
@@ -492,6 +492,7 @@ static void v_Present(void) {
     gpu_present(d);
     if (!stl_headless) stl_pump();                      /* the window's events: here, on the main thread */
     stl_pad_poll();                                     /* the controller, for DirectInput's next read */
+    stl_profile_frame();                                /* STL_PROFILE: where the time goes */
     if (g_frames % 600 == 0) fprintf(stderr, "[d3d9] %llu frames\n", (unsigned long long)g_frames);
     RET(D3D_OK, 5);
 }
@@ -803,6 +804,7 @@ static void v_UpdateTexture(void) {
         for (uint32_t l = 0; l < dst->levels && l + skip < src->levels; l++) {
             uint32_t sp, ss, dp, ds;
             uint32_t sm = level_mem(src, l + skip, (uint32_t)f, &sp, &ss), dm = level_mem(dst, l, (uint32_t)f, &dp, &ds);
+            if (src->kind == R_VOLUMETEXTURE) ss *= level_dim(src->depth, l + skip), ds *= level_dim(dst->depth, l);   /* every slice */
             memcpy(hle_ptr(dm), hle_ptr(sm), ss < ds ? ss : ds);
             dst->dirty[f] |= 1u << l;
         }
@@ -1026,12 +1028,62 @@ static void w_GetLevelDesc(void) {   /* D3DVOLUME_DESC: format, type, usage, poo
     MEM32(p + 16) = level_dim(r->width, l), MEM32(p + 20) = level_dim(r->height, l), MEM32(p + 24) = level_dim(r->depth, l);
     RET(D3D_OK, 3);
 }
+/* D3DLOCKED_BOX (row pitch, slice pitch, bits) for a volume texture's level,
+ * at the D3DBOX's corner (left, top, right, bottom, front, back) if there is
+ * one; the level goes up to the GPU before it is next used. */
+static void put_locked_box(uint32_t lb, res_t *r, uint32_t level, uint32_t box) {
+    uint32_t pitch, slice, mem = level_mem(r, level, 0, &pitch, &slice);
+    r->dirty[0] |= 1u << level;
+    if (box) {
+        uint32_t x = MEM32(box), y = MEM32(box + 4), z = MEM32(box + 16);
+        int b = block_bytes(r->format);
+        mem += z * slice + (b ? (y / 4) * pitch + (x / 4) * (uint32_t)b : y * pitch + x * (uint32_t)bits_per_pixel(r->format) / 8);
+    }
+    MEM32(lb) = pitch, MEM32(lb + 4) = slice, MEM32(lb + 8) = mem;
+}
 static void w_LockBox(void) {   /* (level, D3DLOCKED_BOX*, box, flags) */
     count();
-    uint32_t pitch, slice, mem = level_mem(RES(A32(0)), A32(1), 0, &pitch, &slice);
-    RES(A32(0))->dirty[0] |= 1u << A32(1);
-    MEM32(A32(2)) = pitch, MEM32(A32(2) + 4) = slice, MEM32(A32(2) + 8) = mem;
+    put_locked_box(A32(2), RES(A32(0)), A32(1), A32(3));
     RET(D3D_OK, 5);
+}
+/* A volume texture's level, as an IDirect3DVolume9: one object a level,
+ * made the first time it is asked for, as level_surface does a texture's
+ * surfaces. D3DX fills a volume texture through these (GetVolumeLevel, then
+ * the volume's LockBox): without them the game's volume textures (the
+ * nebulas' clouds, the ships' damage) never loaded, and nothing was bound. */
+static uint32_t level_volume(uint32_t tex, uint32_t level) {
+    res_t *t = RES(tex), *v;
+    uint32_t *slot = &t->surf[level % 16];
+    if (*slot) { addref(*slot); return *slot; }
+    uint32_t o = make(g_vt_volume, sizeof(res_t), (void **)&v);
+    v->kind = R_VOLUME, v->device = t->device;
+    v->width = level_dim(t->width, level), v->height = level_dim(t->height, level), v->depth = level_dim(t->depth, level);
+    v->levels = 1, v->format = t->format, v->usage = t->usage, v->pool = t->pool;
+    v->parent = tex, v->level = level;
+    addref(tex);
+    *slot = o;
+    addref(o);                                           /* the texture's own */
+    return o;
+}
+static void w_GetVolumeLevel(void) {   /* (level, &volume) */
+    count();
+    if (A32(1) >= RES(A32(0))->levels) RET(D3DERR_INVALIDCALL, 3);
+    out_obj(A32(2), level_volume(A32(0), A32(1)));
+    RET(D3D_OK, 3);
+}
+static void vl_GetDesc(void) {   /* (D3DVOLUME_DESC*): format, type, usage, pool, w, h, d */
+    count();
+    res_t *v = RES(A32(0));
+    uint32_t p = A32(1);
+    MEM32(p) = v->format, MEM32(p + 4) = R_VOLUME, MEM32(p + 8) = v->usage, MEM32(p + 12) = v->pool;
+    MEM32(p + 16) = v->width, MEM32(p + 20) = v->height, MEM32(p + 24) = v->depth;
+    RET(D3D_OK, 2);
+}
+static void vl_LockBox(void) {   /* (D3DLOCKED_BOX*, box, flags) */
+    count();
+    res_t *v = RES(A32(0));
+    put_locked_box(A32(1), RES(v->parent), v->level, A32(2));
+    RET(D3D_OK, 4);
 }
 static void s_GetDesc(void) { count(); put_desc(A32(1), RES(A32(0)), 0, R_SURFACE); RET(D3D_OK, 2); }
 static void s_GetContainer(void) {   /* (riid, &container) */
@@ -1180,8 +1232,13 @@ static void vtables(void) {
         { "IDirect3DCubeTexture9::UnlockRect", ok2 }, { "IDirect3DCubeTexture9::AddDirtyRect", ok2 }, { 0, 0 } };
     static const win32hle_shim vol[] = {
         BASETEX("IDirect3DVolumeTexture9"), { "IDirect3DVolumeTexture9::GetLevelDesc", w_GetLevelDesc },
-        { "IDirect3DVolumeTexture9::GetVolumeLevel", ok2 }, { "IDirect3DVolumeTexture9::LockBox", w_LockBox },
+        { "IDirect3DVolumeTexture9::GetVolumeLevel", w_GetVolumeLevel }, { "IDirect3DVolumeTexture9::LockBox", w_LockBox },
         { "IDirect3DVolumeTexture9::UnlockBox", ok1 }, { "IDirect3DVolumeTexture9::AddDirtyBox", ok1 }, { 0, 0 } };
+    static const win32hle_shim volume[] = {     /* IDirect3DVolume9: not a resource, so no priority, no type */
+        UNK("IDirect3DVolume9"), { "IDirect3DVolume9::GetDevice", u_GetDevice }, { "IDirect3DVolume9::SetPrivateData", ok4 },
+        { "IDirect3DVolume9::GetPrivateData", u_GetPrivateData }, { "IDirect3DVolume9::FreePrivateData", ok1 },
+        { "IDirect3DVolume9::GetContainer", s_GetContainer }, { "IDirect3DVolume9::GetDesc", vl_GetDesc },
+        { "IDirect3DVolume9::LockBox", vl_LockBox }, { "IDirect3DVolume9::UnlockBox", ok0 }, { 0, 0 } };
     static const win32hle_shim surf[] = {
         RESOURCE("IDirect3DSurface9"), { "IDirect3DSurface9::GetContainer", s_GetContainer },
         { "IDirect3DSurface9::GetDesc", s_GetDesc }, { "IDirect3DSurface9::LockRect", s_LockRect },
@@ -1214,6 +1271,7 @@ static void vtables(void) {
     g_vt_tex = hle_com_vtable(tex);
     g_vt_cube = hle_com_vtable(cube);
     g_vt_vol = hle_com_vtable(vol);
+    g_vt_volume = hle_com_vtable(volume);
     g_vt_surf = hle_com_vtable(surf);
     g_vt_vb = hle_com_vtable(vb);
     g_vt_ib = hle_com_vtable(ib);
