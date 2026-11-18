@@ -6,6 +6,9 @@
  * lifted game's (the executable exports them: ENABLE_EXPORTS), D3DX's,
  * win32hle's, the host's and the libraries'.
  *
+ * The reports are made on a thread of their own: made on the game's, the
+ * names' lookups held it up to two seconds every report, in play.
+ *
  * Only the game's thread: a timer on the whole process's CPU time
  * (setitimer) interrupted the movies' and the sound's threads too, whose
  * waits gave up on the signal, and the game waited for them for ever. A
@@ -48,7 +51,6 @@ static atomic_uint g_head;
 static unsigned g_tail;
 static pthread_t g_game_thread;
 static int g_game_set, g_on = -1, g_every = 10;
-static uint64_t g_last;
 
 /* The instruction pointer, and who a leaf function will return to: on
  * x86-64 the word at the stack's top, on arm64 the link register. */
@@ -83,7 +85,6 @@ static void on_prof(int sig, siginfo_t *si, void *uc) {
     g_game[i] = g_game_set && pthread_equal(pthread_self(), g_game_thread);
 }
 
-static uint64_t now_s(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec; }
 
 /* On the game's thread, at its first Present. */
 static void start(void) {
@@ -119,7 +120,6 @@ static void start(void) {
     }
     const char *whose = "the game's thread's";
 #endif
-    g_last = now_s();
     fprintf(stderr, "[profile] sampling every 1 ms of %s CPU time; a report every %d s\n", whose, g_every);
 }
 
@@ -204,10 +204,21 @@ static void report(void) {
     g_reporting = 0;
 }
 
-/* Each frame, on the game's thread (Present). */
+static void *reporter(void *arg) {
+    (void)arg;
+    for (;;) {
+        struct timespec ts = { g_every, 0 };
+        while (nanosleep(&ts, &ts) != 0) {}
+        report();
+    }
+    return NULL;
+}
+
+/* Each frame, on the game's thread (Present): the first starts it. */
 void stl_profile_frame(void) {
-    if (g_on < 0) start();
+    if (g_on >= 0) return;
+    start();
     if (!g_on) return;
-    uint64_t t = now_s();
-    if (t - g_last >= (uint64_t)g_every) { g_last = t; report(); }
+    pthread_t t;
+    if (pthread_create(&t, NULL, reporter, NULL) == 0) pthread_detach(t);
 }
