@@ -39,12 +39,24 @@ static call_t g_calls[MAX_METHODS];
 static int g_ncalls;
 static uint64_t g_frames;
 
+/* Each call, counted for the summary at exit: found through a small cache
+ * by the name's address (a battle's frame makes tens of thousands of calls,
+ * and a search of the list each time was a percent of it). */
+static struct { const char *name; int i; } g_count_cache[256];
 static void count(void) {
     const char *name = g_cur_import ? g_cur_import : "?";
-    int i = 0;
-    for (; i < g_ncalls; i++) if (g_calls[i].name == name) break;
-    if (i < g_ncalls) g_calls[i].n++;
-    else if (g_ncalls < MAX_METHODS) g_calls[g_ncalls].name = name, g_calls[g_ncalls++].n = 1;
+    unsigned h = (unsigned)(((uintptr_t)name >> 3) & 255);
+    int i;
+    if (g_count_cache[h].name == name) i = g_count_cache[h].i;
+    else {
+        for (i = 0; i < g_ncalls; i++) if (g_calls[i].name == name) break;
+        if (i == g_ncalls) {
+            if (g_ncalls == MAX_METHODS) return;
+            g_calls[g_ncalls].name = name, g_calls[g_ncalls++].n = 0;
+        }
+        g_count_cache[h].name = name, g_count_cache[h].i = i;
+    }
+    g_calls[i].n++;
     if (stl_verbose) fprintf(stderr, "[d3d9] %s\n", name);
 }
 
@@ -56,6 +68,7 @@ static int by_count(const void *a, const void *b) {
 void stl_d3d9_summary(void) {
     if (!g_ncalls) return;
     qsort(g_calls, (size_t)g_ncalls, sizeof g_calls[0], by_count);
+    memset(g_count_cache, 0, sizeof g_count_cache);      /* the slots moved */
     fprintf(stderr, "\n[d3d9] %d methods called, %llu frames presented:\n", g_ncalls, (unsigned long long)g_frames);
     for (int i = 0; i < g_ncalls; i++) fprintf(stderr, "  %10llu  %s\n", (unsigned long long)g_calls[i].n, g_calls[i].name);
 }

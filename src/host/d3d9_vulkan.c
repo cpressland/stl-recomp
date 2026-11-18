@@ -252,10 +252,14 @@ static uint32_t ring_size(void) {
 
 /* ---- a small hash map: fixed-size keys to 64-bit values ------------------------------- */
 typedef struct { uint8_t *keys; uint64_t *vals; uint8_t *used; uint32_t cap, n, ksize; } map_t;
+/* Eight bytes at a time: a pipeline's key is some 500 bytes, hashed each
+ * draw, and byte by byte that was 2% of a battle's frame on a Deck. */
 static uint64_t hash(const void *k, uint32_t n) {
     const uint8_t *p = (const uint8_t *)k;
-    uint64_t h = 1469598103934665603ull;
-    for (uint32_t i = 0; i < n; i++) h = (h ^ p[i]) * 1099511628211ull;
+    uint64_t h = 1469598103934665603ull, w;
+    uint32_t i = 0;
+    for (; i + 8 <= n; i += 8) { memcpy(&w, p + i, 8); h = (h ^ w) * 0x9E3779B97F4A7C15ull; h ^= h >> 29; }
+    for (; i < n; i++) h = (h ^ p[i]) * 1099511628211ull;
     return h;
 }
 static uint64_t *map_slot(map_t *m, const void *key, int insert);
@@ -1193,9 +1197,12 @@ static VkPipeline pipeline(dev_t_ *d, VkShaderModule vs, VkShaderModule ps, blob
     }
     k.mask[0] = d->rs[168] & 15, k.mask[1] = d->rs[190] & 15, k.mask[2] = d->rs[191] & 15, k.mask[3] = d->rs[192] & 15;
     k.topo = (uint32_t)topology(prim), k.lines = g_fill_lines && d->rs[8] == 2;
+    static pkey_t last;                                   /* draws come in runs: the last one's, first */
+    static VkPipeline last_p;
+    if (last_p && !memcmp(&k, &last, sizeof k)) return last_p;
     if (!g_pipes.ksize) g_pipes.ksize = sizeof k;
     uint64_t *v = map_slot(&g_pipes, &k, 0);
-    if (v) return (VkPipeline)(uintptr_t)*v;
+    if (v) { last = k, last_p = (VkPipeline)(uintptr_t)*v; return last_p; }
 
     VkVertexInputAttributeDescription at[DXSO_MAX_INPUTS];
     VkVertexInputBindingDescription bd[17];
@@ -1289,6 +1296,7 @@ static VkPipeline pipeline(dev_t_ *d, VkShaderModule vs, VkShaderModule ps, blob
         return VK_NULL_HANDLE;
     }
     *map_slot(&g_pipes, &k, 1) = (uint64_t)(uintptr_t)p;
+    last = k, last_p = p;
     return p;
 }
 
