@@ -2,4 +2,4 @@
 # merges (README, "pcrecomp: pending merges"), as one commit on the fork's
 # stl branch. A release (and anyone building) checks this out.
 repository=cpressland/pcrecomp
-ref=cac4c986ecc9dada3f029a1f37da84497c614768
+ref=b7f76500c375ac5f0acad8f0657cc22f506d6257
