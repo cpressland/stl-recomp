@@ -149,6 +149,9 @@ endif()
 
 add_executable(stl src/host/exe.c)
 target_link_libraries(stl PRIVATE stl_obj stl_gen)
+# Its functions in the dynamic symbol table, so STL_PROFILE (profile.c) can
+# name them with dladdr.
+set_target_properties(stl PROPERTIES ENABLE_EXPORTS ON)
 if(STL_SDL_FRAMEWORKS)
   set_target_properties(stl PROPERTIES BUILD_RPATH ${STL_SDL_FRAMEWORKS})
 endif()

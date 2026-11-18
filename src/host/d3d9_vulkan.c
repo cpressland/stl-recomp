@@ -37,7 +37,9 @@
  * Vulkan 1.3, the loader opened at run time (libvulkan.so.1). Without it,
  * or a GPU, or shaderc, the device draws nothing and the game runs on.
  * STL_VULKAN_DEBUG=1 turns on the validation layer, if installed;
- * STL_VULKAN_ANY=1 lets a software Vulkan (llvmpipe) draw.
+ * STL_VULKAN_ANY=1 lets a software Vulkan (llvmpipe) draw;
+ * STL_VULKAN_STATS=1 says every 5 seconds where a frame's time went (the
+ * game's own code, this renderer, waiting for the GPU) and what it did.
  */
 #if !defined(__APPLE__) || defined(STL_VULKAN_CHECK)
 #include <stdio.h>
@@ -79,6 +81,7 @@ int  gpu_is_render_target(const res_t *r) { return r->usage & 1; }
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #include <dlfcn.h>
+#include <time.h>
 
 /* ---- the entry points, from the loader ------------------------------------------- */
 #define VK_GLOBAL(X) X(vkCreateInstance) X(vkEnumerateInstanceVersion) X(vkEnumerateInstanceLayerProperties)
@@ -189,6 +192,43 @@ static float g_clear_z;
 static uint64_t g_frame, g_gen;                       /* gen: the ring restarted (a frame, or full) */
 static uint64_t g_draws, g_skipped_ff, g_skipped_shader;
 static int g_started, g_failed;
+
+/* STL_VULKAN_STATS: time in this renderer (its calls, less their waits for
+ * the GPU), the waits, and the rest of each frame (the game's own code). */
+static int g_stats = -1, g_in_call;
+static uint64_t st_t0, st_last_present, st_call_start;
+static uint64_t st_paced, st_renderer, st_wait, st_compile, st_frames, st_draws, st_passes, st_up, st_shaders, st_pipes, st_frame_max;
+static uint64_t now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+static int stats(void) {
+    if (g_stats < 0) g_stats = getenv("STL_VULKAN_STATS") != NULL;
+    return g_stats;
+}
+static void call_begin(void) { if (stats() && !g_in_call++) st_call_start = now_ns(); }
+static void call_end(void) { if (g_stats > 0 && !--g_in_call) st_renderer += now_ns() - st_call_start; }
+/* A wait for the GPU: its time is the GPU's, not the renderer's. */
+static uint64_t wait_begin(void) { return g_stats > 0 ? now_ns() : 0; }
+static void wait_end(uint64_t t) { if (g_stats > 0) { uint64_t w = now_ns() - t; st_wait += w; st_renderer -= w; } }
+static void stats_frame(void) {
+    if (g_stats <= 0) return;
+    uint64_t t = now_ns();
+    if (st_last_present && t - st_last_present > st_frame_max) st_frame_max = t - st_last_present;
+    st_last_present = t, st_frames++;
+    if (!st_t0) { st_t0 = t; st_paced = st_renderer = st_wait = st_compile = st_frames = st_draws = st_passes = st_up = st_shaders = st_pipes = st_frame_max = 0; return; }
+    if (t - st_t0 < 5000000000ull) return;
+    double n = (double)st_frames, frame = (double)(t - st_t0) / n / 1e6;
+    double ren = (double)st_renderer / n / 1e6, wait = (double)st_wait / n / 1e6, paced = (double)st_paced / n / 1e6;
+    fprintf(stderr, "[vulkan] %.1f fps (slowest %.0f ms): a frame %.1f ms = game %.1f + renderer %.1f (compiling %.1f)"
+                    " + waiting for the GPU %.1f + held to the display %.1f;"
+                    " %.0f draws, %.1f passes, %.2f MB up a frame; %llu new shaders, %llu new pipelines\n",
+            n * 1e9 / (double)(t - st_t0), (double)st_frame_max / 1e6, frame, frame - ren - wait - paced, ren,
+            (double)st_compile / n / 1e6, wait, paced, (double)st_draws / n, (double)st_passes / n, (double)st_up / n / 1048576.0,
+            (unsigned long long)st_shaders, (unsigned long long)st_pipes);
+    st_t0 = t, st_paced = st_renderer = st_wait = st_compile = st_frames = st_draws = st_passes = st_up = st_shaders = st_pipes = st_frame_max = 0;
+}
 
 static void vk_fail(const char *what, VkResult r) {
     if (g_failed++ < 10) fprintf(stderr, "[vulkan] %s failed (%d)\n", what, (int)r);
@@ -324,7 +364,9 @@ static void submit(int wait) {
         f->submitted = 1, g_recording = 0;
     }
     if (wait && f->submitted) {
+        uint64_t wt = wait_begin();
         VKC(vkWaitForFences(g_dev, 1, &f->fence, VK_TRUE, UINT64_MAX));
+        wait_end(wt);
         VKC(vkResetFences(g_dev, 1, &f->fence));
         f->submitted = 0;
     }
@@ -332,7 +374,9 @@ static void submit(int wait) {
 /* A frame's things, once the GPU is done with it. */
 static void frame_reuse(frame_t *f) {
     if (f->submitted) {
+        uint64_t wt = wait_begin();
         VKC(vkWaitForFences(g_dev, 1, &f->fence, VK_TRUE, UINT64_MAX));
+        wait_end(wt);
         VKC(vkResetFences(g_dev, 1, &f->fence));
         f->submitted = 0;
     }
@@ -615,6 +659,7 @@ static void sync_texture(res_t *r) {
             rg.imageSubresource.mipLevel = l, rg.imageSubresource.baseArrayLayer = (uint32_t)f, rg.imageSubresource.layerCount = 1;
             rg.imageExtent.width = w, rg.imageExtent.height = h, rg.imageExtent.depth = d;
             vkCmdCopyBufferToImage(cmd(), a.b, t->img, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
+            st_up += t->convert ? (uint64_t)w * 4 * h * d : (uint64_t)slice * d;
         }
     }
     g_need_barrier = 1;
@@ -895,7 +940,7 @@ static int pass(dev_t_ *d) {
     if (has_depth) ri.pDepthAttachment = &da;
     if (has_depth && g_pass_stencil) ri.pStencilAttachment = &sa;
     vkCmdBeginRendering(cmd(), &ri);
-    g_in_pass = 1;
+    g_in_pass = 1, st_passes++;
     memcpy(g_pass_rt, d->rt, sizeof g_pass_rt), g_pass_ds = d->ds;
     g_pass_w = w, g_pass_h = h, g_pass_ncolor = ncolor;
     return 1;
@@ -904,7 +949,7 @@ static int pass(dev_t_ *d) {
 /* Clear(count, rects, flags, color, z, stencil): of the whole target, the
  * pass's load op; of part (the viewport, the scissor, rectangles),
  * vkCmdClearAttachments. */
-void gpu_clear(dev_t_ *d, uint32_t nrects, uint32_t rects, uint32_t flags, uint32_t color, float z, uint32_t stencil) {
+static void clear(dev_t_ *d, uint32_t nrects, uint32_t rects, uint32_t flags, uint32_t color, float z, uint32_t stencil) {
     if (g_started <= 0) return;
     TRACE("Clear flags %X color %08X z %g rt %08X ds %08X vp %u,%u %ux%u rects %u\n", flags, color, z, d->rt[0], d->ds,
           d->viewport[0], d->viewport[1], d->viewport[2], d->viewport[3], nrects);
@@ -1005,6 +1050,8 @@ static VkShaderModule shader(dev_t_ *d, uint32_t obj, int pixel) {
         b->translated = -1;
         return VK_NULL_HANDLE;
     }
+    uint64_t ct = wait_begin();
+    st_shaders++;
     shaderc_compilation_result_t res = SC.compile_into_spv(SC.compiler, s.text, strlen(s.text),
                                                            pixel ? SHADERC_FRAGMENT : SHADERC_VERTEX, "dxso", "main", SC.options);
     VkShaderModule m = VK_NULL_HANDLE;
@@ -1016,6 +1063,7 @@ static VkShaderModule shader(dev_t_ *d, uint32_t obj, int pixel) {
         VKC(vkCreateShaderModule(g_dev, &mi, NULL, &m));
     }
     if (res) SC.result_release(res);
+    if (g_stats > 0) st_compile += now_ns() - ct;
     if (!m) { b->translated = -1; dxso_free(&s); return VK_NULL_HANDLE; }
     free(b->info.text);
     b->info = s;
@@ -1231,7 +1279,10 @@ static VkPipeline pipeline(dev_t_ *d, VkShaderModule vs, VkShaderModule ps, blob
     gi.pMultisampleState = &ms, gi.pDepthStencilState = &ds, gi.pColorBlendState = &bs, gi.pDynamicState = &dy;
     gi.layout = g_pl;
     VkPipeline p = VK_NULL_HANDLE;
+    uint64_t ct = wait_begin();
     VkResult r = vkCreateGraphicsPipelines(g_dev, g_pcache, 1, &gi, NULL, &p);
+    if (g_stats > 0) st_compile += now_ns() - ct;
+    st_pipes++;
     if (r != VK_SUCCESS) {
         static int told;
         if (told++ < 10) fprintf(stderr, "[vulkan] pipeline: vkCreateGraphicsPipelines failed (%d)\n", (int)r);
@@ -1350,11 +1401,11 @@ static uint32_t vertices_of(uint32_t prim, uint32_t count) {
 }
 static float rsf(dev_t_ *d, int i) { float f; memcpy(&f, &d->rs[i], 4); return f; }
 
-void gpu_draw(dev_t_ *d, uint32_t prim, uint32_t count, uint32_t start, int indexed, int32_t base_vertex,
-              uint32_t min_index, uint32_t num_vertices, uint32_t up_va, uint32_t up_stride,
-              uint32_t up_idx_va, uint32_t up_idx_format) {
+static void draw(dev_t_ *d, uint32_t prim, uint32_t count, uint32_t start, int indexed, int32_t base_vertex,
+                 uint32_t min_index, uint32_t num_vertices, uint32_t up_va, uint32_t up_stride,
+                 uint32_t up_idx_va, uint32_t up_idx_format) {
     if (g_started <= 0 || !count) return;
-    g_draws++;
+    g_draws++, st_draws++;
     TRACE("Draw prim %u count %u %s rt %08X vs %08X ps %08X decl %08X fvf %X tex0 %08X up %u z %u/%u blend %u %u/%u cull %u vp %ux%u\n",
           prim, count, indexed ? "indexed" : "", d->rt[0], d->vs, d->ps, d->decl, d->fvf, d->tex[0], up_va != 0,
           d->rs[7], d->rs[14], d->rs[27], d->rs[19], d->rs[20], d->rs[22], d->viewport[2], d->viewport[3]);
@@ -1516,7 +1567,7 @@ void gpu_draw(dev_t_ *d, uint32_t prim, uint32_t count, uint32_t start, int inde
 }
 
 /* ---- StretchRect, readback, shots, present ------------------------------------------------------- */
-void gpu_stretch_rect(dev_t_ *d, uint32_t src, uint32_t src_rect, uint32_t dst, uint32_t dst_rect, uint32_t filter) {
+static void stretch_rect(dev_t_ *d, uint32_t src, uint32_t src_rect, uint32_t dst, uint32_t dst_rect, uint32_t filter) {
     (void)d;
     if (g_started <= 0 || !src || !dst) return;
     TRACE("StretchRect %08X -> %08X\n", src, dst);
@@ -1657,7 +1708,7 @@ static void window_show(void) {
     hle_gdi_window_changed();                           /* shown by the flip at the end of Present */
 }
 
-void gpu_present(dev_t_ *d) {
+static void present(dev_t_ *d) {
     if (g_started <= 0) return;
     end_pass();
     if (!stl_headless) window_copy(d);
@@ -1666,13 +1717,44 @@ void gpu_present(dev_t_ *d) {
     g_fi = (g_fi + 1) % FRAMES;
     frame_t *f = &F[g_fi];
     if (f->submitted) {                                 /* the frame before last: at most two in flight */
+        uint64_t wt = wait_begin();
         VKC(vkWaitForFences(g_dev, 1, &f->fence, VK_TRUE, UINT64_MAX));
+        wait_end(wt);
     }
     if (!stl_headless) window_show();
     frame_reuse(f);
-    if (!stl_headless) hle_screen_flip();               /* paced as a flip (HLE_MAX_FPS) */
+    if (!stl_headless) {                                /* paced as a flip (HLE_MAX_FPS) */
+        uint64_t pt = wait_begin();
+        hle_screen_flip();
+        if (g_stats > 0) { uint64_t p = now_ns() - pt; st_paced += p; st_renderer -= p; }
+    }
     g_frame++;
     g_gen++;
+}
+
+/* The calls d3d9.c makes, timed for STL_VULKAN_STATS. */
+void gpu_draw(dev_t_ *d, uint32_t prim, uint32_t count, uint32_t start, int indexed, int32_t base_vertex,
+              uint32_t min_index, uint32_t num_vertices, uint32_t up_va, uint32_t up_stride,
+              uint32_t up_idx_va, uint32_t up_idx_format) {
+    call_begin();
+    draw(d, prim, count, start, indexed, base_vertex, min_index, num_vertices, up_va, up_stride, up_idx_va, up_idx_format);
+    call_end();
+}
+void gpu_clear(dev_t_ *d, uint32_t nrects, uint32_t rects, uint32_t flags, uint32_t color, float z, uint32_t stencil) {
+    call_begin();
+    clear(d, nrects, rects, flags, color, z, stencil);
+    call_end();
+}
+void gpu_stretch_rect(dev_t_ *d, uint32_t src, uint32_t src_rect, uint32_t dst, uint32_t dst_rect, uint32_t filter) {
+    call_begin();
+    stretch_rect(d, src, src_rect, dst, dst_rect, filter);
+    call_end();
+}
+void gpu_present(dev_t_ *d) {
+    call_begin();
+    present(d);
+    call_end();
+    stats_frame();
 }
 
 #endif /* STL_HAVE_VULKAN */

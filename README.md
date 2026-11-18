@@ -177,6 +177,18 @@ right`, 0 or 1; `lx ly rx ry lt rt`, -1 to 1).
 beside the game folder; the smoke test uses an empty one, since with a
 save the same clicks continue the campaign rather than start it.
 
+For "it's slow here": `STL_VULKAN_STATS=1` (Linux) writes, every 5
+seconds, the frame rate and where a frame's time went: the game's own code,
+the renderer, waiting for the GPU, and held to the display (with the draws,
+uploads and new shaders and pipelines a frame). `STL_PROFILE=N` (10 with no
+number) samples the game's thread every millisecond of its CPU time and
+names, every N seconds, the functions the time went to: the lifted game's
+`sub_ADDRESS`es, D3DX's (from `0x01000000`), win32hle's and the libraries'.
+`HLE_PRESENTTRACE=1` says the frames shown a second and the late ones. In
+the Flatpak, e.g. as Steam's launch options:
+`flatpak run --env=STL_VULKAN_STATS=1 --env=STL_PROFILE=10 io.cpressland.StarTrekLegacy`;
+the lines go to `logs/stl.log`.
+
 `--shot FILE.bmp` saves the screen 10 seconds in (`--shot-after S` for
 another time), and with `--shot-every S` every S seconds after that, as
 `FILE_1.bmp`, `FILE_2.bmp`, and so on.

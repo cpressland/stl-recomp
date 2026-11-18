@@ -42,6 +42,7 @@ int  stl_shot_take(char *out, size_t n);
 int  stl_main_thread(void);                                         /* main.c: on stl_main's thread (the window's) */
 void stl_pad_start(void);                                           /* pad.c: a game controller, before the game runs */
 void stl_pad_poll(void);                                            /* ...and each frame (Present) */                            /* main.c: a screenshot wanted now (--shot), its path */
+void stl_profile_frame(void);                                       /* profile.c: each Present (STL_PROFILE=N: a report every N s) */
 void stl_pump(void);                                                /* main.c: SDL's events, on the main thread */                                               /* cpu.c */
 
 extern const win32hle_shim stl_shims[];                             /* shims.c */
