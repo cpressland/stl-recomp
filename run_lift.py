@@ -77,6 +77,12 @@ MAX_FILE_BYTES = 8 << 20
 BIG_FUNCTION_LINES = {'d3dx9': 3000}
 BIG_FUNCTION_LINES_DEFAULT = 10000
 
+# ...but not these, however long: they run every frame. D3DX's effect
+# code applies each draw's parameters, and its 4,000-line loop
+# (sub_01107087) was a tenth of a battle's frame on a Steam Deck (STL_PROFILE)
+# compiled without optimisation.
+HOT_FUNCTIONS = {'d3dx9': {0x01107087}}
+
 # Remaster patches: C emitted after one instruction, by module (va -> C).
 PATCHES = {}
 
@@ -282,7 +288,8 @@ def lift_module(m, out, idx, entries, log):
                 body = '/* ERROR %s: %s */\nvoid %s(void) { RECOMP_NOT_LIFTED(0x%08Xu); }\n' % (name, e, name, addr)
                 st['errors'] += 1
                 log(f'[{m.name}] error in {name}: {e}')
-        if body.count('\n') >= BIG_FUNCTION_LINES.get(m.name, BIG_FUNCTION_LINES_DEFAULT):
+        if body.count('\n') >= BIG_FUNCTION_LINES.get(m.name, BIG_FUNCTION_LINES_DEFAULT) \
+                and addr not in HOT_FUNCTIONS.get(m.name, ()):
             body = body.replace('void %s(void)' % name, 'RECOMP_BIG_FN void %s(void)' % name, 1)
             st['optnone'] += 1
         chunk.append((body, addr, name))
