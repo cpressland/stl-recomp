@@ -87,7 +87,8 @@ int  gpu_is_render_target(const res_t *r) { return r->usage & 1; }
 #define VK_GLOBAL(X) X(vkCreateInstance) X(vkEnumerateInstanceVersion) X(vkEnumerateInstanceLayerProperties)
 #define VK_INSTANCE(X) X(vkEnumeratePhysicalDevices) X(vkGetPhysicalDeviceProperties) \
     X(vkGetPhysicalDeviceQueueFamilyProperties) X(vkGetPhysicalDeviceMemoryProperties) X(vkGetPhysicalDeviceFeatures) \
-    X(vkGetPhysicalDeviceFeatures2) X(vkGetPhysicalDeviceFormatProperties) X(vkCreateDevice) X(vkGetDeviceProcAddr)
+    X(vkGetPhysicalDeviceFeatures2) X(vkGetPhysicalDeviceFormatProperties) X(vkCreateDevice) X(vkGetDeviceProcAddr) \
+    X(vkEnumerateDeviceExtensionProperties) X(vkGetPhysicalDeviceProperties2)
 #define VK_DEVICE(X) X(vkGetDeviceQueue) X(vkQueueSubmit) X(vkDeviceWaitIdle) X(vkCreateCommandPool) \
     X(vkAllocateCommandBuffers) X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCreateFence) X(vkWaitForFences) \
     X(vkResetFences) X(vkGetFenceStatus) X(vkCreateBuffer) X(vkDestroyBuffer) X(vkGetBufferMemoryRequirements) \
@@ -173,6 +174,10 @@ static uint32_t g_qfam;
 static VkPhysicalDeviceMemoryProperties g_mem;
 static VkPhysicalDeviceLimits g_limits;
 static VkBool32 g_aniso, g_mirror_once, g_fill_lines;
+/* VK_KHR_push_descriptor: a draw's descriptors pushed into its command
+ * buffer, not a set allocated, written and bound (a twentieth of a battle's
+ * time was the driver's, per draw). Without it, a set each draw. */
+static PFN_vkCmdPushDescriptorSetKHR g_push;
 static VkCommandPool g_cpool;
 static VkDescriptorSetLayout g_dsl;
 static VkPipelineLayout g_pl;
@@ -197,7 +202,7 @@ static int g_started, g_failed;
  * the GPU), the waits, and the rest of each frame (the game's own code). */
 static int g_stats = -1, g_in_call;
 static uint64_t st_t0, st_last_present, st_call_start;
-static uint64_t st_paced, st_renderer, st_wait, st_compile, st_frames, st_draws, st_passes, st_up, st_shaders, st_pipes, st_frame_max;
+static uint64_t st_paced, st_renderer, st_wait, st_compile, st_frames, st_draws, st_passes, st_up, st_shaders, st_pipes, st_frame_max, st_ring;
 static uint64_t now_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -217,17 +222,18 @@ static void stats_frame(void) {
     uint64_t t = now_ns();
     if (st_last_present && t - st_last_present > st_frame_max) st_frame_max = t - st_last_present;
     st_last_present = t, st_frames++;
-    if (!st_t0) { st_t0 = t; st_paced = st_renderer = st_wait = st_compile = st_frames = st_draws = st_passes = st_up = st_shaders = st_pipes = st_frame_max = 0; return; }
+    if (!st_t0) { st_t0 = t; st_paced = st_renderer = st_wait = st_compile = st_frames = st_draws = st_passes = st_up = st_shaders = st_pipes = st_frame_max = st_ring = 0; return; }
     if (t - st_t0 < 5000000000ull) return;
     double n = (double)st_frames, frame = (double)(t - st_t0) / n / 1e6;
     double ren = (double)st_renderer / n / 1e6, wait = (double)st_wait / n / 1e6, paced = (double)st_paced / n / 1e6;
     fprintf(stderr, "[vulkan] %.1f fps (slowest %.0f ms): a frame %.1f ms = game %.1f + renderer %.1f (compiling %.1f)"
                     " + waiting for the GPU %.1f + held to the display %.1f;"
-                    " %.0f draws, %.1f passes, %.2f MB up a frame; %llu new shaders, %llu new pipelines\n",
+                    " %.0f draws, %.1f passes, %.2f MB up a frame (%.2f MB of constants and vertices);"
+                    " %llu new shaders, %llu new pipelines\n",
             n * 1e9 / (double)(t - st_t0), (double)st_frame_max / 1e6, frame, frame - ren - wait - paced, ren,
             (double)st_compile / n / 1e6, wait, paced, (double)st_draws / n, (double)st_passes / n, (double)st_up / n / 1048576.0,
-            (unsigned long long)st_shaders, (unsigned long long)st_pipes);
-    st_t0 = t, st_paced = st_renderer = st_wait = st_compile = st_frames = st_draws = st_passes = st_up = st_shaders = st_pipes = st_frame_max = 0;
+            (double)st_ring / n / 1048576.0, (unsigned long long)st_shaders, (unsigned long long)st_pipes);
+    st_t0 = t, st_paced = st_renderer = st_wait = st_compile = st_frames = st_draws = st_passes = st_up = st_shaders = st_pipes = st_frame_max = st_ring = 0;
 }
 
 static void vk_fail(const char *what, VkResult r) {
@@ -431,6 +437,7 @@ static ralloc_t ring_alloc(uint32_t n) {
 static ralloc_t ring_copy(const void *src, uint32_t n) {
     ralloc_t r = ring_alloc(n);
     if (r.p) memcpy(r.p, src, n);
+    if (g_stats > 0) st_ring += n;
     return r;
 }
 
@@ -680,14 +687,38 @@ static VkBuffer buffer_of(res_t *r, uint32_t *offset) {
             r->dirty[0] = 1;
         }
         buf_t *b = (buf_t *)r->gpu;
-        if (r->dirty[0] && b->map) { memcpy(b->map, hle_ptr(r->mem[0]), r->size); r->dirty[0] = 0; }
+        if (r->dirty[0] && b->map) {
+            if (r->dirty[0] == 1) memcpy(b->map, hle_ptr(r->mem[0]), r->size);   /* (made dirty here, not locked) */
+            else if (r->lock_hi > r->lock_lo) memcpy(b->map + r->lock_lo, (uint8_t *)hle_ptr(r->mem[0]) + r->lock_lo, r->lock_hi - r->lock_lo);
+            r->dirty[0] = 0;
+        }
         return b->b;
     }
-    if (r->dirty[0] || r->gpu_frame != g_gen + 1 || !r->gpu_ring) {   /* dynamic: into the ring when it changed */
-        ralloc_t a = ring_copy(hle_ptr(r->mem[0]), r->size);
-        r->gpu_offset = a.off;
-        r->gpu_ring = (void *)(uintptr_t)a.b;
-        r->gpu_frame = g_gen + 1;
+    /* Dynamic: a copy in this frame's ring. A lock with D3DLOCK_NOOVERWRITE
+     * (a particle system's appends) puts only its bytes into the copy the
+     * frame's draws already use, which they promised not to read; any other
+     * makes a new copy, of only the bytes locked after D3DLOCK_DISCARD. A
+     * battle locks a dozen buffers a frame, each a few hundred bytes of one
+     * of tens of kilobytes: copied whole, they were a tenth of the game's
+     * time in memcpy. */
+    int fresh = !r->gpu_ring || r->gpu_frame != g_gen + 1;
+    if (fresh || r->dirty[0]) {
+        uint32_t lo = r->lock_lo, hi = r->lock_hi > r->size ? r->size : r->lock_hi;
+        const uint8_t *src = (const uint8_t *)hle_ptr(r->mem[0]);
+        if (fresh || (r->dirty[0] & RD_NEW)) {
+            ralloc_t a = ring_alloc(r->size ? r->size : 16);
+            if (a.p) {
+                if (!fresh && (r->dirty[0] & RD_DISCARD)) { if (hi > lo) memcpy(a.p + lo, src + lo, hi - lo); }
+                else memcpy(a.p, src, r->size);
+            }
+            r->gpu_offset = a.off, r->gpu_map = a.p;
+            r->gpu_ring = (void *)(uintptr_t)a.b;
+            r->gpu_frame = g_gen + 1;
+            if (g_stats > 0) st_ring += a.p ? (!fresh && (r->dirty[0] & RD_DISCARD) ? hi - lo : r->size) : 0;
+        } else if (r->gpu_map && hi > lo) {
+            memcpy((uint8_t *)r->gpu_map + lo, src + lo, hi - lo);
+            if (g_stats > 0) st_ring += hi - lo;
+        }
         r->dirty[0] = 0;
     }
     *offset = r->gpu_offset;
@@ -809,12 +840,30 @@ static int start(void) {
     f2.pNext = &f12;
     f2.features.samplerAnisotropy = g_aniso, f2.features.fillModeNonSolid = g_fill_lines;
     f2.features.textureCompressionBC = have.textureCompressionBC;
+    int push = 0;                                       /* VK_KHR_push_descriptor, with room for a draw's 24 */
+    uint32_t nx = 0;
+    if (vkEnumerateDeviceExtensionProperties(g_pd, NULL, &nx, NULL) == VK_SUCCESS && nx) {
+        VkExtensionProperties *x = (VkExtensionProperties *)calloc(nx, sizeof *x);
+        if (x && vkEnumerateDeviceExtensionProperties(g_pd, NULL, &nx, x) == VK_SUCCESS)
+            for (uint32_t i = 0; i < nx; i++) if (!strcmp(x[i].extensionName, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)) push = 1;
+        free(x);
+    }
+    if (push) {
+        VkPhysicalDevicePushDescriptorPropertiesKHR pdp = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR };
+        VkPhysicalDeviceProperties2 p2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+        p2.pNext = &pdp;
+        vkGetPhysicalDeviceProperties2(g_pd, &p2);
+        push = pdp.maxPushDescriptors >= 24 && !getenv("STL_VULKAN_NO_PUSH");
+    }
+    static const char *const push_ext[] = { VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME };
     VkDeviceCreateInfo di = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     di.pNext = &f2, di.queueCreateInfoCount = 1, di.pQueueCreateInfos = &qi;
+    if (push) di.enabledExtensionCount = 1, di.ppEnabledExtensionNames = push_ext;
     r = vkCreateDevice(g_pd, &di, NULL, &g_dev);
     if (r != VK_SUCCESS) { fprintf(stderr, "[vulkan] no device (%d): nothing is drawn\n", (int)r); return -1; }
 #define LOAD_D(f) f = (PFN_##f)vkGetDeviceProcAddr(g_dev, #f); if (!f) { fprintf(stderr, "[vulkan] no %s\n", #f); return -1; }
     VK_DEVICE(LOAD_D)
+    if (push) g_push = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(g_dev, "vkCmdPushDescriptorSetKHR");
     vkGetDeviceQueue(g_dev, g_qfam, 0, &g_q);
     vkGetPhysicalDeviceMemoryProperties(g_pd, &g_mem);
     VkPhysicalDeviceProperties pp;
@@ -846,6 +895,7 @@ static int start(void) {
     }
     VkDescriptorSetLayoutCreateInfo li = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
     li.bindingCount = 24, li.pBindings = lb;
+    if (g_push) li.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     VKC(vkCreateDescriptorSetLayout(g_dev, &li, NULL, &g_dsl));
     VkPipelineLayoutCreateInfo pli = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
     pli.setLayoutCount = 1, pli.pSetLayouts = &g_dsl;
@@ -861,8 +911,8 @@ static int start(void) {
     g_blank[1] = image_new(VK_FORMAT_B8G8R8A8_UNORM, 1, 1, 1, 1, R_CUBETEXTURE, 0, CV_NONE, 0, id);
     g_blank[2] = image_new(VK_FORMAT_B8G8R8A8_UNORM, 1, 1, 1, 1, R_VOLUMETEXTURE, 0, CV_NONE, 0, id);
     submit(1);
-    fprintf(stderr, "[vulkan] %s (Vulkan %u.%u)\n", pp.deviceName, VK_API_VERSION_MAJOR(pp.apiVersion),
-            VK_API_VERSION_MINOR(pp.apiVersion));
+    fprintf(stderr, "[vulkan] %s (Vulkan %u.%u)%s\n", pp.deviceName, VK_API_VERSION_MAJOR(pp.apiVersion),
+            VK_API_VERSION_MINOR(pp.apiVersion), g_push ? ", push descriptors" : "");
     return 0;
 }
 
@@ -1409,6 +1459,25 @@ static uint32_t vertices_of(uint32_t prim, uint32_t count) {
 }
 static float rsf(dev_t_ *d, int i) { float f; memcpy(&f, &d->rs[i], 4); return f; }
 
+/* A draw's constants: the copy the last draw made, while they have not
+ * changed since (d->cver) and it is in this frame's ring; else a new one.
+ * Copied each draw, they were 8 KB of 800 draws a frame in a battle. */
+static struct { const dev_t_ *d; uint32_t ver; uint64_t gen; ralloc_t a; } g_uc[6];
+static ralloc_t consts(const dev_t_ *d, int k, const void *src, uint32_t n) {
+    if (g_uc[k].a.b && g_uc[k].d == d && g_uc[k].ver == d->cver[k] && g_uc[k].gen == g_gen) return g_uc[k].a;
+    ralloc_t a = ring_copy(src, n);
+    g_uc[k].d = d, g_uc[k].ver = d->cver[k], g_uc[k].gen = g_gen, g_uc[k].a = a;
+    return a;
+}
+static ralloc_t params(const dxso_params *p) {
+    static dxso_params last;
+    static uint64_t gen;
+    static ralloc_t a;
+    if (a.b && gen == g_gen && !memcmp(p, &last, sizeof last)) return a;
+    a = ring_copy(p, sizeof *p), last = *p, gen = g_gen;
+    return a;
+}
+
 static void draw(dev_t_ *d, uint32_t prim, uint32_t count, uint32_t start, int indexed, int32_t base_vertex,
                  uint32_t min_index, uint32_t num_vertices, uint32_t up_va, uint32_t up_stride,
                  uint32_t up_idx_va, uint32_t up_idx_format) {
@@ -1481,13 +1550,13 @@ static void draw(dev_t_ *d, uint32_t prim, uint32_t count, uint32_t start, int i
     dxso_params P = { { -1.0f / vw, 1.0f / vh }, (d->rs[24] & 255) / 255.0f, d->rs[15] ? d->rs[25] : 0,
                       { ((d->rs[34] >> 16) & 255) / 255.0f, ((d->rs[34] >> 8) & 255) / 255.0f, (d->rs[34] & 255) / 255.0f, 1.0f },
                       d->rs[28] != 0, { 0 } };
-    ralloc_t ub[7] = { ring_copy(d->vsc, sizeof d->vsc), ring_copy(d->vsi, sizeof d->vsi), ring_copy(d->vsb, sizeof d->vsb),
-                       ring_copy(&P, sizeof P), ring_copy(d->psc, sizeof d->psc), ring_copy(d->psi, sizeof d->psi),
-                       ring_copy(d->psb, sizeof d->psb) };
+    ralloc_t ub[7] = { consts(d, 0, d->vsc, sizeof d->vsc), consts(d, 1, d->vsi, sizeof d->vsi), consts(d, 2, d->vsb, sizeof d->vsb),
+                       params(&P), consts(d, 3, d->psc, sizeof d->psc), consts(d, 4, d->psi, sizeof d->psi),
+                       consts(d, 5, d->psb, sizeof d->psb) };
     static const uint32_t sizes[8] = { sizeof d->vsc, sizeof d->vsi, sizeof d->vsb, sizeof P, sizeof d->psc,
                                        sizeof d->psi, sizeof d->psb, sizeof P };
-    VkDescriptorSet set = dset();
-    if (!set) return;
+    VkDescriptorSet set = g_push ? VK_NULL_HANDLE : dset();
+    if (!g_push && !set) return;
     VkDescriptorBufferInfo bi[8];
     VkWriteDescriptorSet w[24];
     uint32_t nw = 0;
@@ -1507,8 +1576,11 @@ static void draw(dev_t_ *d, uint32_t prim, uint32_t count, uint32_t start, int i
         w[nw].descriptorCount = 1, w[nw].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, w[nw].pImageInfo = &ii[s];
         nw++;
     }
-    vkUpdateDescriptorSets(g_dev, nw, w, 0, NULL);
-    vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pl, 0, 1, &set, 0, NULL);
+    if (g_push) g_push(c, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pl, 0, nw, w);
+    else {
+        vkUpdateDescriptorSets(g_dev, nw, w, 0, NULL);
+        vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pl, 0, 1, &set, 0, NULL);
+    }
     /* vertices */
     VkBuffer zb[B_ZEROS + 1];                           /* every binding something: zeros, then the streams */
     VkDeviceSize zoff[B_ZEROS + 1];
@@ -1711,7 +1783,10 @@ static void window_show(void) {
         newest = f->show_seq, best = i;
     }
     if (best < 0) return;
-    memcpy(g_win_px, F[best].show.map, (size_t)g_show_w * g_show_h * 4);
+    /* The window shows the copy where it is (else a 4 MB memcpy a frame):
+     * the flip at the end of this Present shows it, and the GPU writes it
+     * again only in a later frame, after this flip. */
+    hle_gdi_window_surface(F[best].show.map, (int)g_show_w, (int)g_show_h, (int)g_show_w * 4, 32);
     g_shown = newest;
     hle_gdi_window_changed();                           /* shown by the flip at the end of Present */
 }

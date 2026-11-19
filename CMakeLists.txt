@@ -63,9 +63,14 @@ set(GEN_OPT "-O2" CACHE STRING "optimisation for the generated C")
 target_compile_options(stl_gen PRIVATE -w -fno-strict-aliasing -fwrapv)
 # D3DX is its HLSL compiler and effect loader, run at start-up: -O1 halves
 # its build (7.5 million of the 11 million lines) for no frame-rate cost.
+# Not its effects' code that runs each frame (setting a pass's state and
+# constants: pages 0104, 010E and 0110, 285,000 lines), a tenth of a battle's
+# time on a Steam Deck: that is optimised as the game is.
 set(D3DX_OPT "-O1" CACHE STRING "optimisation for D3DX's generated C")
 foreach(f ${GEN_SOURCES})
-  if(f MATCHES "recomp_d3dx9_")
+  if(f MATCHES "recomp_d3dx9_(0104|010E|0110)_")
+    set_source_files_properties(${f} PROPERTIES COMPILE_OPTIONS "${GEN_OPT}")
+  elseif(f MATCHES "recomp_d3dx9_")
     set_source_files_properties(${f} PROPERTIES COMPILE_OPTIONS "${D3DX_OPT}")
   else()
     set_source_files_properties(${f} PROPERTIES COMPILE_OPTIONS "${GEN_OPT}")

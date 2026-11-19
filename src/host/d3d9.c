@@ -429,8 +429,16 @@ static void sb_put(sblock_t *b, uint32_t off, uint32_t size, const void *val) {
 }
 /* A setter's write: recorded while a block is being recorded, else made. */
 static void set(dev_t_ *d, void *field, const void *val, uint32_t size) {
-    if (d->rec) sb_put((sblock_t *)d->rec, (uint32_t)((uint8_t *)field - (uint8_t *)d), size, val);
-    else memmove(field, val, size);
+    if (d->rec) { sb_put((sblock_t *)d->rec, (uint32_t)((uint8_t *)field - (uint8_t *)d), size, val); return; }
+    memmove(field, val, size);
+    uint8_t *p = (uint8_t *)field;                         /* the shader constants: which changed, for the backend */
+    if (p + size > (uint8_t *)d->vsc && p < (uint8_t *)(d->psb + 16)) {
+        static uint32_t seq;
+        const struct { void *at; size_t n; } a[6] = { { d->vsc, sizeof d->vsc }, { d->vsi, sizeof d->vsi }, { d->vsb, sizeof d->vsb },
+                                                      { d->psc, sizeof d->psc }, { d->psi, sizeof d->psi }, { d->psb, sizeof d->psb } };
+        for (int k = 0; k < 6; k++)
+            if (p + size > (uint8_t *)a[k].at && p < (uint8_t *)a[k].at + a[k].n) d->cver[k] = ++seq;
+    }
 }
 static void set32(dev_t_ *d, uint32_t *field, uint32_t v) { set(d, field, &v, 4); }
 
@@ -1118,8 +1126,14 @@ static void s_GetDC(void) { count(); RET(D3DERR_INVALIDCALL, 2); }
 static void b_Lock(void) {   /* (offset, size, &data, flags) */
     count();
     res_t *r = RES(A32(0));
-    r->dirty[0] = 1;
-    MEM32(A32(3)) = r->mem[0] + (A32(1) < r->size ? A32(1) : 0);
+    uint32_t off = A32(1) < r->size ? A32(1) : 0, n = A32(2), flags = A32(4);
+    uint32_t end = n && n <= r->size - off ? off + n : r->size;    /* size 0: all of it from the offset */
+    if (!r->dirty[0]) r->lock_lo = off, r->lock_hi = end;
+    else r->lock_lo = off < r->lock_lo ? off : r->lock_lo, r->lock_hi = end > r->lock_hi ? end : r->lock_hi;
+    r->dirty[0] |= RD_WRITTEN;
+    if (flags & 0x2000) r->dirty[0] |= RD_NEW | RD_DISCARD;        /* D3DLOCK_DISCARD */
+    else if (!(flags & 0x1000)) r->dirty[0] |= RD_NEW, r->lock_lo = 0, r->lock_hi = r->size;   /* neither: all of it kept */
+    MEM32(A32(3)) = r->mem[0] + off;
     RET(D3D_OK, 5);
 }
 static void b_GetDesc(void) {   /* D3DVERTEXBUFFER_DESC: format, type, usage, pool, size, fvf (index: no fvf) */

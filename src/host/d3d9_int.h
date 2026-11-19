@@ -31,11 +31,20 @@ typedef struct {
     uint32_t multisample;
     /* the GPU's */
     void *gpu;                /* id<MTLTexture> (a surface of a texture: its parent's) or id<MTLBuffer> */
-    uint32_t dirty[6];        /* levels (bits) of each face written since they went up */
+    uint32_t dirty[6];        /* levels (bits) of each face written since they went up; a buffer's
+                                 dirty[0]: RD_* (any set: written) */
+    uint32_t lock_lo, lock_hi; /* a buffer: the bytes written since they went up */
     uint64_t gpu_frame;       /* a dynamic buffer: the frame its copy is from */
     uint32_t gpu_offset;      /* ...and where in that frame's ring */
     void *gpu_ring;           /* ...which buffer: the ring, or one it went on in (not retained: the frame keeps it) */
+    void *gpu_map;            /* ...and where the CPU sees that copy (Vulkan) */
 } res_t;
+
+/* A buffer's dirty[0]: it was written; a lock without D3DLOCK_NOOVERWRITE
+ * (draws made before it may read what it changes: a new copy, not the one
+ * they use); with D3DLOCK_DISCARD (the rest of it is undefined: only the
+ * bytes locked need going up). */
+enum { RD_WRITTEN = 1, RD_NEW = 2, RD_DISCARD = 4 };
 
 typedef struct {
     uint32_t device, len, code;          /* a shader's or declaration's bytes */
@@ -75,6 +84,7 @@ typedef struct {
     float    vsc[256][4], psc[224][4];
     int32_t  vsi[16][4], psi[16][4];
     uint32_t vsb[16], psb[16];
+    uint32_t cver[6];                      /* vsc vsi vsb psc psi psb: changed when it is (a number never used before) */
     uint32_t sw_vp;
     uint32_t light[8][26];                 /* D3DLIGHT9 */
     uint32_t light_on[8];
